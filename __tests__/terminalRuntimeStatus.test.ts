@@ -76,6 +76,8 @@ describe('isTerminalRuntimeStatusResponse', () => {
         successResponse({
           runtimeState: 'ready',
           activeRootfsId: PINNED_ROOTFS_ID,
+          activeDistro: 'alpine',
+          activeRelease: PINNED_ALPINE_RELEASE,
           activeAlpineRelease: PINNED_ALPINE_RELEASE,
           activeRootfsSha256: PINNED_ROOTFS_SHA256,
           activeInstalledAt: '2026-09-08T00:00:00.000Z',
@@ -85,6 +87,35 @@ describe('isTerminalRuntimeStatusResponse', () => {
     ).toBe(true);
     expect(isTerminalRuntimeStatusResponse(successResponse({installedVersionIds: ['../escape']}))).toBe(false);
     expect(isTerminalRuntimeStatusResponse(successResponse({prootAvailable: undefined}))).toBe(false);
+  });
+
+  it('requires the active distro and release to match the catalog entry', () => {
+    const ready = {
+      runtimeState: 'ready',
+      activeRootfsId: PINNED_ROOTFS_ID,
+      activeDistro: 'alpine',
+      activeRelease: PINNED_ALPINE_RELEASE,
+      activeAlpineRelease: PINNED_ALPINE_RELEASE,
+      activeRootfsSha256: PINNED_ROOTFS_SHA256,
+      activeInstalledAt: '2026-09-08T00:00:00.000Z',
+      installedVersionIds: [PINNED_ROOTFS_ID],
+    };
+    expect(isTerminalRuntimeStatusResponse(successResponse(ready))).toBe(true);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...ready, activeDistro: undefined}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...ready, activeDistro: 'debian'}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...ready, activeRelease: '3.23.0'}))).toBe(false);
+    // Alpine keeps reporting activeAlpineRelease, and it must agree.
+    expect(isTerminalRuntimeStatusResponse(successResponse({...ready, activeAlpineRelease: undefined}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...ready, activeAlpineRelease: '3.23.0'}))).toBe(false);
+    // A rootfs the catalog does not know is never ready.
+    expect(
+      isTerminalRuntimeStatusResponse(
+        successResponse({...ready, activeRootfsId: 'debian-13-aarch64', installedVersionIds: ['debian-13-aarch64']}),
+      ),
+    ).toBe(false);
+    expect(
+      isTerminalRuntimeStatusResponse(successResponse({runtimeState: 'not_installed', activeDistro: 'alpine'})),
+    ).toBe(false);
   });
 
   it('rejects active metadata that disagrees with runtime state', () => {
@@ -98,6 +129,8 @@ describe('isTerminalRuntimeStatusResponse', () => {
         successResponse({
           runtimeState: 'ready',
           activeRootfsId: PINNED_ROOTFS_ID,
+          activeDistro: 'alpine',
+          activeRelease: PINNED_ALPINE_RELEASE,
           activeAlpineRelease: PINNED_ALPINE_RELEASE,
           activeRootfsSha256: PINNED_ROOTFS_SHA256,
           activeInstalledAt: '2026-09-08T00:00:00.000Z',

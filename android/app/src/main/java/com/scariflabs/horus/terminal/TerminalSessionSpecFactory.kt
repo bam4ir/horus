@@ -252,7 +252,7 @@ class TerminalSessionSpecFactory(
   }
 
   private object UnusedGuestProber : GuestProber {
-    override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long): GuestProbeResult =
+    override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long, entry: RootfsCatalogEntry): GuestProbeResult =
       throw IllegalStateException("session factory does not probe rootfs")
   }
 

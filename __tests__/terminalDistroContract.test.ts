@@ -24,6 +24,8 @@ describe('request builders', () => {
     expect(buildInstallRootfsRequest('')).toBeNull();
     expect(buildInstallRootfsRequest('bad id!')).toBeNull();
     expect(buildInstallRootfsRequest('x'.repeat(65))).toBeNull();
+    // Only catalog entries can be requested.
+    expect(buildInstallRootfsRequest('install-1', 'debian-13-aarch64')).toBeNull();
   });
 
   it('builds scoped reset requests only', () => {
@@ -106,6 +108,7 @@ describe('isInstallRootfsResponse', () => {
   it('rejects a success with a malformed digest or unknown rootfs id', () => {
     expect(isInstallRootfsResponse({...success, archiveSha256: 'not-a-digest'})).toBe(false);
     expect(isInstallRootfsResponse({...success, rootfsId: '../escape'})).toBe(false);
+    expect(isInstallRootfsResponse({...success, rootfsId: 'debian-13-aarch64'})).toBe(false);
     expect(isInstallRootfsResponse({...success, durationMs: 1.5})).toBe(false);
     expect(isInstallRootfsResponse({...success, probeMarkers: 'alpine_probe_begin'})).toBe(false);
     expect(isInstallRootfsResponse({...success, archiveBytes: Number.MAX_SAFE_INTEGER + 1})).toBe(false);

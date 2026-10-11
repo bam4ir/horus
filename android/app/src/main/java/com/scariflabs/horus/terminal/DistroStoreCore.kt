@@ -53,10 +53,16 @@ class DistroStoreCore(
     data class Failure(val rootfsId: String, val stage: String, val reasonCode: String, val detail: String) : InstallOutcome
   }
 
+  /**
+   * The installed rootfs a record points at. Alpine records keep the v1 shape
+   * (`alpineRelease`, no `distro`) byte for byte, so an older Horus can still
+   * read them after a downgrade; other distributions use v2.
+   */
   data class ActiveRecord(
     val schemaVersion: Int,
+    val distro: String,
     val rootfsId: String,
-    val alpineRelease: String,
+    val release: String,
     val rootfsSha256: String,
     val installedAtIso: String,
     val probeMarkers: List<String>,
@@ -79,10 +85,11 @@ class DistroStoreCore(
 
   @Synchronized
   fun install(
-    rootfsId: String = AlpineRootfsCatalog.ROOTFS_ID,
-    url: String = AlpineRootfsCatalog.ROOTFS_URL,
-    expectedSha256: String = AlpineRootfsCatalog.ROOTFS_SHA256,
-    expectedBytes: Long = AlpineRootfsCatalog.ROOTFS_SIZE_BYTES,
+    entry: RootfsCatalogEntry = RootfsCatalog.DEFAULT,
+    rootfsId: String = entry.rootfsId,
+    url: String = entry.url,
+    expectedSha256: String = entry.sha256,
+    expectedBytes: Long = entry.sizeBytes,
     downloadTimeoutMs: Long = 120_000,
     source: ArchiveDownloader = downloader,
   ): InstallOutcome {
@@ -164,7 +171,7 @@ class DistroStoreCore(
 
     // The guest must prove itself before promotion.
     val probe = try {
-      prober.probe(stagingRootfs, paths.home, 60_000)
+      prober.probe(stagingRootfs, paths.home, 60_000, entry)
     } catch (error: Exception) {
       deleteQuietly(staging)
       return InstallOutcome.Failure(rootfsId, "probe", "probe_failed", error.message ?: "probe failure")
@@ -179,9 +186,10 @@ class DistroStoreCore(
     }
 
     val record = ActiveRecord(
-      schemaVersion = AlpineRootfsCatalog.MANIFEST_SCHEMA_VERSION,
+      schemaVersion = recordSchemaFor(entry.distro),
+      distro = entry.distro,
       rootfsId = rootfsId,
-      alpineRelease = AlpineRootfsCatalog.ALPINE_RELEASE,
+      release = entry.release,
       rootfsSha256 = expectedSha256,
       installedAtIso = java.time.Instant.ofEpochMilli(clock()).toString(),
       probeMarkers = probe.markerLines(),
@@ -267,8 +275,9 @@ class DistroStoreCore(
     val manifest = readRecordFile(paths.versionManifest(record.rootfsId)) ?: return null
     return record.takeIf {
       manifest.schemaVersion == record.schemaVersion &&
+        manifest.distro == record.distro &&
         manifest.rootfsId == record.rootfsId &&
-        manifest.alpineRelease == record.alpineRelease &&
+        manifest.release == record.release &&
         manifest.rootfsSha256 == record.rootfsSha256 &&
         manifest.installedAtIso == record.installedAtIso &&
         manifest.probeMarkers == record.probeMarkers
@@ -364,15 +373,16 @@ class DistroStoreCore(
     if (Files.isSymbolicLink(file.toPath()) || !file.isFile) return null
     return try {
       val json = JSONObject(file.readText(Charsets.UTF_8))
+      val schemaVersion = json.optInt("schemaVersion", -1)
       val id = json.optString("rootfsId")
       val digest = json.optString("rootfsSha256")
-      val release = json.optString("alpineRelease")
       val installedAt = json.optString("installedAtIso")
-      if (!AlpineRootfsCatalog.isValidRootfsId(id) ||
-        !sha256Pattern.matches(digest) ||
-        release != AlpineRootfsCatalog.ALPINE_RELEASE ||
-        json.optInt("schemaVersion", -1) != AlpineRootfsCatalog.MANIFEST_SCHEMA_VERSION
-      ) return null
+      val (distro, release) = when (schemaVersion) {
+        RootfsCatalog.LEGACY_ALPINE_RECORD_SCHEMA -> RootfsCatalog.DISTRO_ALPINE to json.optString("alpineRelease")
+        RootfsCatalog.RECORD_SCHEMA -> json.optString("distro") to json.optString("release")
+        else -> return null
+      }
+      if (!AlpineRootfsCatalog.isValidRootfsId(id) || !sha256Pattern.matches(digest)) return null
       val values = json.optJSONArray("probeMarkers") ?: return null
       val markers = (0 until values.length()).map { index ->
         val value = values.opt(index)
@@ -380,9 +390,10 @@ class DistroStoreCore(
         value
       }
       val record = ActiveRecord(
-        schemaVersion = AlpineRootfsCatalog.MANIFEST_SCHEMA_VERSION,
+        schemaVersion = schemaVersion,
+        distro = distro,
         rootfsId = id,
-        alpineRelease = release,
+        release = release,
         rootfsSha256 = digest,
         installedAtIso = installedAt,
         probeMarkers = markers,
@@ -416,21 +427,19 @@ class DistroStoreCore(
     return candidate == base || candidate.startsWith(base + File.separator)
   }
 
-  private fun isValidRecord(record: ActiveRecord): Boolean =
-    record.schemaVersion == AlpineRootfsCatalog.MANIFEST_SCHEMA_VERSION &&
-      AlpineRootfsCatalog.isValidRootfsId(record.rootfsId) &&
+  /** A record is only valid for a catalog entry it matches exactly. */
+  private fun isValidRecord(record: ActiveRecord): Boolean {
+    val entry = RootfsCatalog.byId(record.rootfsId) ?: return false
+    return record.schemaVersion == recordSchemaFor(entry.distro) &&
+      record.distro == entry.distro &&
       sha256Pattern.matches(record.rootfsSha256) &&
-      record.alpineRelease == AlpineRootfsCatalog.ALPINE_RELEASE &&
+      record.release == entry.release &&
       runCatching { java.time.Instant.parse(record.installedAtIso) }.isSuccess &&
-      record.probeMarkers == listOf(
-        AlpineRootfsCatalog.ProbeMarkers.BEGIN,
-        AlpineRootfsCatalog.ProbeMarkers.EXPECTED_ARCH,
-        AlpineRootfsCatalog.ALPINE_RELEASE,
-        AlpineRootfsCatalog.ProbeMarkers.EXPECTED_HOME,
-        AlpineRootfsCatalog.ProbeMarkers.EXPECTED_APK,
-        AlpineRootfsCatalog.ProbeMarkers.EXPECTED_SH,
-        AlpineRootfsCatalog.ProbeMarkers.END,
-      )
+      record.probeMarkers == entry.probeMarkers
+  }
+
+  private fun recordSchemaFor(distro: String): Int =
+    if (distro == RootfsCatalog.DISTRO_ALPINE) RootfsCatalog.LEGACY_ALPINE_RECORD_SCHEMA else RootfsCatalog.RECORD_SCHEMA
 
   private fun writeJsonAtomically(destination: File, json: JSONObject) {
     val temp = File(destination.parentFile, ".${destination.name}.tmp")
@@ -443,8 +452,9 @@ class DistroStoreCore(
 
   private fun ActiveRecord.toJson(): JSONObject = JSONObject()
     .put("schemaVersion", schemaVersion)
+    .apply { if (schemaVersion == RootfsCatalog.RECORD_SCHEMA) put("distro", distro) }
     .put("rootfsId", rootfsId)
-    .put("alpineRelease", alpineRelease)
+    .put(if (schemaVersion == RootfsCatalog.RECORD_SCHEMA) "release" else "alpineRelease", release)
     .put("rootfsSha256", rootfsSha256)
     .put("installedAtIso", installedAtIso)
     .put("probeMarkers", org.json.JSONArray(probeMarkers))

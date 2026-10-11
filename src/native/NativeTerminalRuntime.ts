@@ -113,6 +113,9 @@ export type TerminalRuntimeStatusResponse = {
   prootAvailable?: boolean;
   prootVersion?: string;
   activeRootfsId?: string;
+  activeDistro?: string;
+  activeRelease?: string;
+  /** Alpine only; kept so the field keeps its old meaning. */
   activeAlpineRelease?: string;
   activeRootfsSha256?: string;
   activeInstalledAt?: string;

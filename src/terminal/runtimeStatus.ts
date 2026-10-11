@@ -51,6 +51,8 @@ export type TerminalRuntimeStatusSuccess = Readonly<{
   prootVersion: string;
   installedVersionIds: readonly string[];
   activeRootfsId?: string;
+  activeDistro?: string;
+  activeRelease?: string;
   activeAlpineRelease?: string;
   activeRootfsSha256?: string;
   activeInstalledAt?: string;
@@ -127,6 +129,8 @@ type TerminalRuntimeStatusWireSuccess = {
   prootVersion: string;
   installedVersionIds: string[];
   activeRootfsId?: string;
+  activeDistro?: string;
+  activeRelease?: string;
   activeAlpineRelease?: string;
   activeRootfsSha256?: string;
   activeInstalledAt?: string;
@@ -194,6 +198,8 @@ export async function readTerminalRuntimeStatus(
       prootVersion: success.prootVersion,
       installedVersionIds: success.installedVersionIds,
       ...(success.activeRootfsId !== undefined ? {activeRootfsId: success.activeRootfsId} : {}),
+      ...(success.activeDistro !== undefined ? {activeDistro: success.activeDistro} : {}),
+      ...(success.activeRelease !== undefined ? {activeRelease: success.activeRelease} : {}),
       ...(success.activeAlpineRelease !== undefined ? {activeAlpineRelease: success.activeAlpineRelease} : {}),
       ...(success.activeRootfsSha256 !== undefined ? {activeRootfsSha256: success.activeRootfsSha256} : {}),
       ...(success.activeInstalledAt !== undefined ? {activeInstalledAt: success.activeInstalledAt} : {}),

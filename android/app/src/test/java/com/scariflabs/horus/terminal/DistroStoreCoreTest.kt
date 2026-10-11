@@ -46,7 +46,7 @@ class DistroStoreCoreTest {
 
   private class FakeProber(private val result: GuestProbeResult? = null) : GuestProber {
     var calls = 0
-    override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long): GuestProbeResult {
+    override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long, entry: RootfsCatalogEntry): GuestProbeResult {
       calls++
       result?.let { return it }
       return GuestProbeResult(
@@ -95,7 +95,8 @@ class DistroStoreCoreTest {
     val active = store.readActiveRecord()
     assertNotNull(active)
     assertEquals(AlpineRootfsCatalog.ROOTFS_ID, active!!.rootfsId)
-    assertEquals("3.24.0", active.alpineRelease)
+    assertEquals(RootfsCatalog.DISTRO_ALPINE, active.distro)
+    assertEquals("3.24.0", active.release)
     assertEquals(archiveSha256, active.rootfsSha256)
     assertEquals(AlpineRootfsCatalog.MANIFEST_SCHEMA_VERSION, active.schemaVersion)
     assertTrue(active.probeMarkers.contains("aarch64"))
@@ -198,6 +199,58 @@ class DistroStoreCoreTest {
     assertEquals(listOf(AlpineRootfsCatalog.ROOTFS_ID), store.installedVersionIds())
     assertEquals(1, store.installedVersionIds().size)
     assertNotNull(store.readActiveRecord())
+  }
+
+  @Test
+  fun `an alpine install keeps writing the v1 record an older horus can read`() {
+    val store = newStore()
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    for (record in listOf(store.storage.activeRecord, store.storage.versionManifest(AlpineRootfsCatalog.ROOTFS_ID))) {
+      val json = org.json.JSONObject(record.readText())
+      assertEquals(1, json.getInt("schemaVersion"))
+      assertEquals("3.24.0", json.getString("alpineRelease"))
+      assertFalse(json.has("distro"))
+      assertFalse(json.has("release"))
+    }
+  }
+
+  @Test
+  fun `an active record written by horus 1_0_4 still reads as the active alpine rootfs`() {
+    val store = newStore()
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    // The exact shape 1.0.4 wrote, so an upgrade never sees "not installed".
+    val legacy = """{"schemaVersion":1,"rootfsId":"alpine-3.24.0-aarch64","alpineRelease":"3.24.0",""" +
+      """"rootfsSha256":"$archiveSha256","installedAtIso":"2026-10-01T10:00:00Z","probeMarkers":""" +
+      """["alpine_probe_begin","aarch64","3.24.0","/root","/sbin/apk","/bin/sh","alpine_probe_end"]}"""
+    store.storage.activeRecord.writeText(legacy)
+    store.storage.versionManifest(AlpineRootfsCatalog.ROOTFS_ID).writeText(legacy)
+
+    val active = store.readActiveRecord()
+    assertNotNull(active)
+    assertEquals(RootfsCatalog.DISTRO_ALPINE, active!!.distro)
+    assertEquals("3.24.0", active.release)
+    assertEquals(listOf(AlpineRootfsCatalog.ROOTFS_ID), store.installedVersionIds())
+  }
+
+  @Test
+  fun `records that do not match their catalog entry read as not installed`() {
+    val store = newStore()
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    val markers = """["alpine_probe_begin","aarch64","3.24.0","/root","/sbin/apk","/bin/sh","alpine_probe_end"]"""
+    val base = """"rootfsId":"alpine-3.24.0-aarch64","rootfsSha256":"$archiveSha256",""" +
+      """"installedAtIso":"2026-10-01T10:00:00Z","probeMarkers":$markers"""
+    val mismatched = listOf(
+      // Alpine must stay on the v1 shape.
+      """{"schemaVersion":2,"distro":"alpine","release":"3.24.0",$base}""",
+      // A v1 record is always Alpine, so its release must be Alpine's.
+      """{"schemaVersion":1,"alpineRelease":"3.23.0",$base}""",
+      // An id the catalog does not know.
+      """{"schemaVersion":2,"distro":"debian","release":"13",""" + base.replace("alpine-3.24.0-aarch64", "debian-13-aarch64") + "}",
+    )
+    for (json in mismatched) {
+      store.storage.activeRecord.writeText(json)
+      assertNull(json, store.readActiveRecord())
+    }
   }
 
   @Test

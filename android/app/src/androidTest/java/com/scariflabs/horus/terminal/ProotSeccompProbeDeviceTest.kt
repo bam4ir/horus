@@ -242,7 +242,7 @@ class ProotSeccompProbeDeviceTest {
     }
     assertTrue("no installed active rootfs on this device", record != null)
     val rootfsDir = realPaths.versionRootfs(record!!.rootfsId)
-    Log.i(LOG_TAG, "SC_ROOTFS id=${record.rootfsId} release=${record.alpineRelease}")
+    Log.i(LOG_TAG, "SC_ROOTFS id=${record.rootfsId} release=${record.release}")
 
     val results = mutableListOf<Triple<String, String, StepOutcome>>()
     try {

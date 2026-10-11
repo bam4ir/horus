@@ -45,6 +45,37 @@ export const PINNED_PROBE_MARKERS = [
   'alpine_probe_end',
 ] as const;
 
+/** One installable distribution; mirrors RootfsCatalogEntry on the native side. */
+export type RootfsCatalogEntry = Readonly<{
+  distro: string;
+  rootfsId: string;
+  release: string;
+  sha256: string;
+  sizeBytes: number;
+  url: string;
+  probeMarkers: readonly string[];
+}>;
+
+export const ROOTFS_DISTRO_ALPINE = 'alpine';
+
+export const ALPINE_ROOTFS: RootfsCatalogEntry = {
+  distro: ROOTFS_DISTRO_ALPINE,
+  rootfsId: PINNED_ROOTFS_ID,
+  release: PINNED_ALPINE_RELEASE,
+  sha256: PINNED_ROOTFS_SHA256,
+  sizeBytes: PINNED_ROOTFS_SIZE_BYTES,
+  url: PINNED_ROOTFS_URL,
+  probeMarkers: PINNED_PROBE_MARKERS,
+};
+
+/** Every distribution the app can install. Alpine is the default. */
+export const ROOTFS_CATALOG: readonly RootfsCatalogEntry[] = [ALPINE_ROOTFS];
+export const DEFAULT_ROOTFS: RootfsCatalogEntry = ALPINE_ROOTFS;
+
+export function rootfsCatalogEntry(rootfsId: unknown): RootfsCatalogEntry | undefined {
+  return ROOTFS_CATALOG.find(entry => entry.rootfsId === rootfsId);
+}
+
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const ROOTFS_ID_PATTERN = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -124,9 +155,13 @@ export function isValidTerminalRuntimeErrorCode(
   return isKnownErrorCode(value);
 }
 
-export function buildInstallRootfsRequest(requestId: string): InstallRootfsRequest | null {
+export function buildInstallRootfsRequest(
+  requestId: string,
+  rootfsId: string = DEFAULT_ROOTFS.rootfsId,
+): InstallRootfsRequest | null {
   if (!isValidRequestId(requestId)) return null;
-  return {requestId, rootfsId: PINNED_ROOTFS_ID};
+  if (rootfsCatalogEntry(rootfsId) === undefined) return null;
+  return {requestId, rootfsId};
 }
 
 export function buildResetRuntimeRequest(
@@ -162,6 +197,8 @@ export function isTerminalRuntimeStatusResponse(
       'prootAvailable',
       'prootVersion',
       'activeRootfsId',
+      'activeDistro',
+      'activeRelease',
       'activeAlpineRelease',
       'activeRootfsSha256',
       'activeInstalledAt',
@@ -185,23 +222,30 @@ export function isTerminalRuntimeStatusResponse(
   const installedVersionIds = value.installedVersionIds;
   const activeKeys = [
     value.activeRootfsId,
-    value.activeAlpineRelease,
+    value.activeDistro,
+    value.activeRelease,
     value.activeRootfsSha256,
     value.activeInstalledAt,
   ];
-  const hasAnyActiveMetadata = activeKeys.some(item => item !== undefined);
-  const hasCompleteActiveMetadata = activeKeys.every(item => item !== undefined);
-  const activeStateOk =
-    value.runtimeState === TERMINAL_RUNTIME_STATE_READY
-      ? hasCompleteActiveMetadata &&
-        value.activeRootfsId === PINNED_ROOTFS_ID &&
-        value.activeAlpineRelease === PINNED_ALPINE_RELEASE &&
-        isValidSha256Digest(value.activeRootfsSha256) &&
-        value.activeRootfsSha256 === PINNED_ROOTFS_SHA256 &&
-        isIsoInstant(value.activeInstalledAt) &&
-        installedVersionIds.includes(PINNED_ROOTFS_ID)
-      : !hasAnyActiveMetadata;
-  return activeStateOk;
+  if (value.runtimeState !== TERMINAL_RUNTIME_STATE_READY) {
+    return !activeKeys.some(item => item !== undefined) && value.activeAlpineRelease === undefined;
+  }
+  const entry = rootfsCatalogEntry(value.activeRootfsId);
+  if (entry === undefined || !activeKeys.every(item => item !== undefined)) return false;
+  // activeAlpineRelease is set for Alpine only, and then always agrees with activeRelease.
+  const alpineReleaseOk =
+    entry.distro === ROOTFS_DISTRO_ALPINE
+      ? value.activeAlpineRelease === entry.release
+      : value.activeAlpineRelease === undefined;
+  return (
+    value.activeDistro === entry.distro &&
+    value.activeRelease === entry.release &&
+    alpineReleaseOk &&
+    isValidSha256Digest(value.activeRootfsSha256) &&
+    value.activeRootfsSha256 === entry.sha256 &&
+    isIsoInstant(value.activeInstalledAt) &&
+    installedVersionIds.includes(entry.rootfsId)
+  );
 }
 
 export function isInstallRootfsResponse(value: unknown): value is InstallRootfsResponse {
@@ -214,6 +258,8 @@ export function isInstallRootfsResponse(value: unknown): value is InstallRootfsR
     );
   }
   if (value.status !== 'success') return false;
+  const entry = rootfsCatalogEntry(value.rootfsId);
+  if (entry === undefined) return false;
   return (
     hasOnlyKeys(value, [
       'requestId',
@@ -228,15 +274,14 @@ export function isInstallRootfsResponse(value: unknown): value is InstallRootfsR
       'durationMs',
     ]) &&
     isValidRootfsId(value.rootfsId) &&
-    value.rootfsId === PINNED_ROOTFS_ID &&
     isValidSha256Digest(value.archiveSha256) &&
-    value.archiveSha256 === PINNED_ROOTFS_SHA256 &&
-    value.archiveBytes === PINNED_ROOTFS_SIZE_BYTES &&
+    value.archiveSha256 === entry.sha256 &&
+    value.archiveBytes === entry.sizeBytes &&
     isSafePositiveInteger(value.extractionFiles) &&
     value.probeExitCode === 0 &&
     Array.isArray(value.probeMarkers) &&
-    value.probeMarkers.length === PINNED_PROBE_MARKERS.length &&
-    value.probeMarkers.every((marker, index) => marker === PINNED_PROBE_MARKERS[index]) &&
+    value.probeMarkers.length === entry.probeMarkers.length &&
+    value.probeMarkers.every((marker, index) => marker === entry.probeMarkers[index]) &&
     typeof value.reusedCache === 'boolean' &&
     isSafeNonNegativeInteger(value.durationMs)
   );

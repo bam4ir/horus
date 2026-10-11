@@ -386,7 +386,10 @@ class TerminalRuntimeModule(
       }
       if (active != null) {
         putString("activeRootfsId", active.rootfsId)
-        putString("activeAlpineRelease", active.alpineRelease)
+        putString("activeDistro", active.distro)
+        putString("activeRelease", active.release)
+        // Kept for Alpine so the field keeps its old meaning.
+        if (active.distro == RootfsCatalog.DISTRO_ALPINE) putString("activeAlpineRelease", active.release)
         putString("activeRootfsSha256", active.rootfsSha256)
         putString("activeInstalledAt", active.installedAtIso)
       }
@@ -489,9 +492,10 @@ class TerminalRuntimeModule(
       val requestedId = if (request.hasKey("rootfsId") && request.getType("rootfsId") == ReadableType.String) {
         request.getString("rootfsId")
       } else {
-        AlpineRootfsCatalog.ROOTFS_ID
+        RootfsCatalog.DEFAULT.rootfsId
       }
-      if (requestedId != AlpineRootfsCatalog.ROOTFS_ID) {
+      val entry = RootfsCatalog.byId(requestedId)
+      if (entry == null) {
         promise.resolve(installError(requestId, "invalid_request"))
         return
       }
@@ -500,7 +504,7 @@ class TerminalRuntimeModule(
         return
       }
       TerminalDebugLog.record(appContext, "module_rootfs_install_start request=$requestId")
-      runRootfsInstall(requestId, promise, imported = null)
+      runRootfsInstall(requestId, promise, entry, imported = null)
     }
   }
 
@@ -532,7 +536,7 @@ class TerminalRuntimeModule(
             return
           }
           TerminalDebugLog.record(appContext, "module_rootfs_import_start request=$requestId")
-          runRootfsInstall(requestId, promise, imported = uri)
+          runRootfsInstall(requestId, promise, RootfsCatalog.DEFAULT, imported = uri)
         }
       }
       appContext.addActivityEventListener(listener)
@@ -550,13 +554,15 @@ class TerminalRuntimeModule(
   }
 
   /** Runs one install on the install worker; the caller already holds installInProgress. */
-  private fun runRootfsInstall(responseRequestId: String, promise: Promise, imported: Uri?) {
+  private fun runRootfsInstall(responseRequestId: String, promise: Promise, entry: RootfsCatalogEntry, imported: Uri?) {
     installExecutor.execute {
       val response = try {
         val outcome = if (imported == null) {
-          store.install(url = downloadSourceSettings.read().rootfsUrl)
+          // The download-source mirror setting only covers Alpine.
+          val url = if (entry == RootfsCatalog.ALPINE) downloadSourceSettings.read().rootfsUrl else entry.url
+          store.install(entry, url = url)
         } else {
-          store.install(source = ContentUriArchiveReader(appContext.contentResolver, imported))
+          store.install(entry, source = ContentUriArchiveReader(appContext.contentResolver, imported))
         }
         when (outcome) {
           is DistroStoreCore.InstallOutcome.Success -> {
@@ -1114,7 +1120,7 @@ class TerminalRuntimeModule(
 
   /** A prober that fails closed when the packaged runtime is unusable. */
   private class UnavailableGuestProber(private val reasonCode: String) : GuestProber {
-    override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long): GuestProbeResult =
+    override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long, entry: RootfsCatalogEntry): GuestProbeResult =
       throw IllegalStateException("proot runtime unavailable: $reasonCode")
   }
 

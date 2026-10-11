@@ -88,6 +88,8 @@ function runtimeStatus(overrides: Record<string, unknown> = {}): Record<string, 
     prootVersion: '5.4.0',
     installedVersionIds: ['alpine-3.24.0-aarch64'],
     activeRootfsId: 'alpine-3.24.0-aarch64',
+    activeDistro: 'alpine',
+    activeRelease: '3.24.0',
     activeAlpineRelease: '3.24.0',
     activeRootfsSha256: '4b8cd66a6688b2a87276c39843ed89c3a06d9534fc6a5823c586aff2696c1f2a',
     activeInstalledAt: '2026-09-08T00:00:00.000Z',
@@ -109,7 +111,7 @@ describe('TerminalScreen', () => {
   test('installs a missing runtime, refreshes status, then starts', async () => {
     const runtime = fakeRuntime();
     const statuses = [
-      runtimeStatus({runtimeState: 'not_installed', installedVersionIds: [], activeRootfsId: undefined, activeAlpineRelease: undefined, activeRootfsSha256: undefined, activeInstalledAt: undefined}),
+      runtimeStatus({runtimeState: 'not_installed', installedVersionIds: [], activeRootfsId: undefined, activeDistro: undefined, activeRelease: undefined, activeAlpineRelease: undefined, activeRootfsSha256: undefined, activeInstalledAt: undefined}),
       runtimeStatus(),
     ];
     runtime.spec.getRuntimeStatus = jest.fn().mockImplementation(async () => statuses.shift());
@@ -729,7 +731,7 @@ describe('TerminalScreen', () => {
 
     const failed = fakeRuntime();
     failed.spec.startSession = jest.fn(failed.spec.startSession);
-    failed.spec.getRuntimeStatus = jest.fn().mockResolvedValue(runtimeStatus({runtimeState: 'not_installed', installedVersionIds: [], activeRootfsId: undefined, activeAlpineRelease: undefined, activeRootfsSha256: undefined, activeInstalledAt: undefined}));
+    failed.spec.getRuntimeStatus = jest.fn().mockResolvedValue(runtimeStatus({runtimeState: 'not_installed', installedVersionIds: [], activeRootfsId: undefined, activeDistro: undefined, activeRelease: undefined, activeAlpineRelease: undefined, activeRootfsSha256: undefined, activeInstalledAt: undefined}));
     failed.spec.installRootfs = jest.fn().mockImplementation(async (request: {requestId: string}) => ({requestId: request.requestId, status: 'error', errorCode: 'download_failed'}));
     await ReactTestRenderer.act(async () => { renderer = ReactTestRenderer.create(<TerminalScreen client={new TerminalSessionClient(failed.spec)} runtime={failed.spec} />); });
     await ReactTestRenderer.act(async () => { await flushAsync(); });
