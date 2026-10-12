@@ -224,12 +224,20 @@ class TerminalSessionSpecFactory(
       val guestHomeDir = activeGuestHome(null)
       // The active user's home may postdate the pairing; give it the paired keys.
       RemoteAccess.Store(paths.base).syncKeysToHomes()
+      // The app's harnesses, so SSH runs the same installs and logins.
+      val distro = activeDistro()
+      val harnessHomes = AGENT_TARGETS.mapNotNull { target ->
+        val user = TerminalHarnessUsers.forTarget(target, profileUsername) ?: return@mapNotNull null
+        val home = paths.harnessHomeFor(distro, user.homeKey)
+        if (home.isDirectory) ProotSessionLauncher.HarnessHome(target, user.username, home) else null
+      }
       RemoteAccessBuildOutcome.Success(
         launcher.remoteAccessLaunchSpec(
           rootfsDir = rootfsDir,
           guestHomeDir = guestHomeDir,
           workspaceDir = paths.defaultWorkspace,
           guestUsername = profileUsername,
+          harnessHomes = harnessHomes,
         ),
       )
     } catch (error: Exception) {
@@ -289,5 +297,10 @@ class TerminalSessionSpecFactory(
   private companion object {
     const val LOG_TAG = "HorusTerminal"
     const val MAX_ERROR_LOG_CHARS = 160
+    private val AGENT_TARGETS = listOf(
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE,
+    )
   }
 }

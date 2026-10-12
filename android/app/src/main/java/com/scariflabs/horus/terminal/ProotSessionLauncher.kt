@@ -39,6 +39,9 @@ class ProotSessionLauncher(
   private val downloadSources: DownloadSources = DownloadSources(),
 ) {
 
+  /** A harness's home, as the app's own sessions of that harness see it. */
+  data class HarnessHome(val target: String, val username: String, val hostDir: File)
+
   data class LaunchSpec(
     val argv: List<String>,
     val environment: List<String>,
@@ -183,11 +186,17 @@ class ProotSessionLauncher(
     guestUid: Int = GUEST_UID,
     guestGid: Int = GUEST_GID,
     port: Int = RemoteAccess.PORT,
+    harnessHomes: List<HarnessHome> = emptyList(),
   ): LaunchSpec {
     require(guestUsername != GUEST_ROOT_USER) { "remote access needs a non-root profile user" }
     require(port in 1025..65535) { "remote access port is invalid" }
+    harnessHomes.forEach { home ->
+      require(home.target in AGENT_STUB_TARGETS && USERNAME_PATTERN.matches(home.username) && home.username != guestUsername) {
+        "harness home is invalid"
+      }
+    }
     installRootHelper(rootfsDir)
-    return buildLaunchSpec(
+    val launch = buildLaunchSpec(
       rootfsDir = rootfsDir,
       guestHomeDir = guestHomeDir,
       workspaceDir = workspaceDir,
@@ -211,7 +220,13 @@ class ProotSessionLauncher(
       bindHomeAtRoot = false,
       // SSH logins allocate their own pseudo-terminals inside the guest.
       extraDeviceBinds = ptyDeviceBinds(),
+      // The app's harness homes, where its sessions see them, so `codex`
+      // and friends over SSH run the app's installs with its logins.
+      extraBinds = harnessHomes.map { it.hostDir to "/home/${it.username}" },
     )
+    if (harnessHomes.isEmpty()) return launch
+    val agentHomes = harnessHomes.joinToString(" ") { "${it.target}=/home/${it.username}" }
+    return launch.copy(environment = launch.environment + "HORUS_AGENT_HOMES=$agentHomes")
   }
 
   private fun buildLaunchSpec(
@@ -226,6 +241,7 @@ class ProotSessionLauncher(
     toolchainTarget: String? = null,
     forceRootIdentity: Boolean = false,
     extraDeviceBinds: List<Pair<File, String>> = emptyList(),
+    extraBinds: List<Pair<File, String>> = emptyList(),
     bindHomeAtRoot: Boolean = true,
   ): LaunchSpec {
     require(rootfsDir.isDirectory) { "rootfs directory is missing" }
@@ -314,6 +330,10 @@ class ProotSessionLauncher(
       if (workspacePath != null) {
         add("-b")
         add("$workspacePath:/workspace")
+      }
+      extraBinds.forEach { (source, guestPath) ->
+        add("-b")
+        add("${source.canonicalFile.absolutePath}:$guestPath")
       }
       deviceBinds.forEach { bind ->
         add("-b")
@@ -1067,6 +1087,11 @@ class ProotSessionLauncher(
     const val GUEST_LANG = "C.UTF-8"
     const val GUEST_SUDO_PATH = "/usr/local/bin/sudo"
     const val GUEST_ROOT_HELPER_PATH = "/usr/local/lib/horus/sudo-helper"
+    private val AGENT_STUB_TARGETS = setOf(
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
+      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE,
+    )
     private val ROOT_HELPER_FILES = listOf("sudo" to GUEST_SUDO_PATH, "sudo-helper" to GUEST_ROOT_HELPER_PATH)
     const val HOST_PROC = "/proc"
     const val HOST_DEV = "/dev"
@@ -1802,6 +1827,15 @@ EOF
         opencode) name="OpenCode" ;;
         *) printf 'horus: unknown agent %s\n' "${'$'}tool" >&2; exit 2 ;;
       esac
+      # Prefer the app's own install, run in its harness home, so SSH shares
+      # the app's login, settings, and trusted folders.
+      app_home=${'$'}(sed -n "s#^${'$'}tool=##p" /usr/local/lib/horus/agent-homes 2>/dev/null)
+      if [ -n "${'$'}app_home" ] && [ -x "${'$'}app_home/.local/bin/${'$'}tool" ]; then
+        export HOME="${'$'}app_home" XDG_CONFIG_HOME="${'$'}app_home/.config" XDG_DATA_HOME="${'$'}app_home/.local/share" XDG_CACHE_HOME="${'$'}app_home/.cache"
+        export PATH="${'$'}app_home/.local/bin:${'$'}PATH"
+        if [ "${'$'}tool" = codex ]; then export NPM_CONFIG_PREFIX="${'$'}app_home/.local" npm_config_prefix="${'$'}app_home/.local"; fi
+        exec "${'$'}app_home/.local/bin/${'$'}tool" "${'$'}@"
+      fi
       # On Debian the user cannot run apt; Horus's app tiles install the
       # system packages as root, and these need only what is already there.
       system_packages() {
@@ -1854,6 +1888,8 @@ EOF
       HORUS_INSTALLER
       chmod 755 "${'$'}agent_installer.tmp"
       mv -f "${'$'}agent_installer.tmp" "${'$'}agent_installer"
+      # SSH logins do not inherit this environment; leave the homes in a file.
+      printf '%s\n' ${'$'}{HORUS_AGENT_HOMES:-} > /usr/local/lib/horus/agent-homes
       for agent in claude codex opencode; do
         stub="/usr/local/bin/${'$'}agent"
         # Never replace a real install someone put here (npm -g does).
@@ -1877,6 +1913,11 @@ EOF
       fi
       HORUS_ZSH
       mv -f /etc/zsh/zshrc.d/horus-ssh.zsh.tmp /etc/zsh/zshrc.d/horus-ssh.zsh
+      # Debian's zsh reads only /etc/zsh/zshrc, not zshrc.d; load it there.
+      if [ -x /usr/bin/apt-get ] && [ -f /etc/zsh/zshrc ] && ! grep -q 'horus-zshrc.d' /etc/zsh/zshrc; then
+        printf '%s\n' '# horus-zshrc.d: load the snippets Horus keeps in /etc/zsh/zshrc.d' \
+          'for horus_rc in /etc/zsh/zshrc.d/*.zsh(N); do source "${'$'}horus_rc"; done; unset horus_rc' >> /etc/zsh/zshrc
+      fi
       # sudo for SSH logins, as for the app's own terminal (see sudo-helper).
       if [ -x /usr/bin/python3 ] && [ -f $GUEST_ROOT_HELPER_PATH ]; then
         mkdir -p /run/horus-sudo
