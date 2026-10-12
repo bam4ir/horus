@@ -36,7 +36,7 @@ class DistroStoreCore(
 
   interface RootfsExtractor {
     @Throws(IOException::class)
-    fun extract(archive: File, destinationRoot: File): SafeTarGzExtractor.Summary
+    fun extract(archive: File, destinationRoot: File, format: ArchiveFormat): SafeTarExtractor.Summary
   }
 
   sealed interface InstallOutcome {
@@ -44,7 +44,7 @@ class DistroStoreCore(
       val rootfsId: String,
       val archiveBytes: Long,
       val archiveSha256: String,
-      val extraction: SafeTarGzExtractor.Summary,
+      val extraction: SafeTarExtractor.Summary,
       val probe: GuestProbeResult,
       val reusedCachedArchive: Boolean,
       val durationMs: Long,
@@ -159,11 +159,11 @@ class DistroStoreCore(
     val stagingRootfs = File(staging, "rootfs")
     val summary = try {
       if (!stagingRootfs.mkdirs()) throw IOException("cannot create staging rootfs")
-      extractor.extract(archiveToUse, stagingRootfs)
+      extractor.extract(archiveToUse, stagingRootfs, entry.archiveFormat)
     } catch (error: Exception) {
       deleteQuietly(staging)
       val reason = when (error) {
-        is SafeTarGzExtractor.UnsafeArchiveException -> "unsafe_archive"
+        is SafeTarExtractor.UnsafeArchiveException -> "unsafe_archive"
         else -> "extraction_failed"
       }
       return InstallOutcome.Failure(rootfsId, "extract", reason, error.message ?: "extraction failure")

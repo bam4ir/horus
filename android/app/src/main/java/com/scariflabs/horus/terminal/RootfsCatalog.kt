@@ -1,5 +1,8 @@
 package com.scariflabs.horus.terminal
 
+/** How a pinned rootfs archive is compressed. Always a tar inside. */
+enum class ArchiveFormat { TAR_GZ, TAR_XZ }
+
 /**
  * One installable guest distribution, pinned like Alpine: a fixed archive,
  * digest, and size, plus the guest probe that must pass before the rootfs is
@@ -14,6 +17,7 @@ data class RootfsCatalogEntry(
   val url: String,
   val sha256: String,
   val sizeBytes: Long,
+  val archiveFormat: ArchiveFormat,
   val probeBegin: String,
   val probeEnd: String,
   /** Each check runs one guest executable and must print exactly [ProbeCheck.expected]. */
@@ -43,6 +47,7 @@ object RootfsCatalog {
     url = AlpineRootfsCatalog.ROOTFS_URL,
     sha256 = AlpineRootfsCatalog.ROOTFS_SHA256,
     sizeBytes = AlpineRootfsCatalog.ROOTFS_SIZE_BYTES,
+    archiveFormat = ArchiveFormat.TAR_GZ,
     probeBegin = AlpineRootfsCatalog.ProbeMarkers.BEGIN,
     probeEnd = AlpineRootfsCatalog.ProbeMarkers.END,
     probeChecks = listOf(

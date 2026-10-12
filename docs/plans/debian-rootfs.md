@@ -23,7 +23,7 @@ Ground rules:
 | Catalog (`AlpineRootfsCatalog`) | One pinned entry: id, URL, sha256, size, release, probe | Yes |
 | Records (`readRecordFile`, `isValidRecord`) | Reject anything whose `alpineRelease` is not `3.24.0` or whose probe markers differ | Yes |
 | JS contract (`src/terminal/distroContract.ts`) | `activeRootfsId === PINNED_ROOTFS_ID`, pinned digest, pinned markers | Yes |
-| Extractor (`SafeTarGzExtractor`) | gzip only | Debian ships `.tar.xz` |
+| Extractor (`SafeTarExtractor`, was `SafeTarGzExtractor`) | gzip and xz, picked by the catalog entry | No |
 | PRoot (`ProotSessionLauncher`) | `-0`, `--link2symlink`, home/workspace binds | No; this is what dpkg needs too |
 | Provisioning script (`ProotSessionLauncher` ~L1110-1640) | ~10 `apk add` calls: shell, gh, Claude, Codex/OpenCode, procps, remote access, agent installer; `/etc/apk/repositories` mirror rewrite | Yes |
 | Probe (`ProotGuestProber`) | `/etc/alpine-release`, `/sbin/apk` | Yes |
@@ -77,7 +77,7 @@ Ship-safe on its own. **Estimate: ~1 day.**
 
 ### Phase 2: xz archives
 
-1. Add `org.tukaani:xz` (pure Java, public domain; fine for F-Droid) and let
+1. Add `org.tukaani:xz` (pure Java, 0BSD since 1.10; fine for F-Droid) and let
    the extractor pick the decompressor from the catalog's `archiveFormat`.
 2. Keep every existing safety check (path traversal, symlink escape, device
    nodes, size caps). Debian's rootfs has more hardlinks and device entries
@@ -91,11 +91,19 @@ Ship-safe on its own. **Estimate: ~1 day.**
 ### Phase 3: Debian rootfs and probe
 
 1. Source: the official debuerreotype builds
-   (`docker-debian-artifacts`, branch `dist-arm64v8`, `trixie/slim`),
-   pinned by sha256 like Alpine. They are built from Debian's own archive and
-   are reproducible. Fallback if that URL scheme is unstable: build the same
-   tarball in CI and attach it to a Horus GitHub release, still pinned.
-2. Size: ~30 MB download vs ~4 MB for Alpine. Show it in the picker.
+   (`docker-debian-artifacts`, branch `dist-arm64v8`, `trixie/slim`). They
+   are built from Debian's own archive and are reproducible.
+   Checked 2026-10-12: that branch now ships `oci/blobs/rootfs.tar.gz`
+   (30.2 MB, gzip; the old `rootfs.tar.xz` is gone), and its sha256 equals the
+   OCI layer digest of `arm64v8/debian:trixie-slim`. But every build is one
+   commit that replaces the previous one (the branch is force-pushed), so a
+   commit-pinned raw URL can stop resolving once a newer build lands. So the
+   pinned URL points at a Horus GitHub release asset: the same tarball,
+   recompressed to `.tar.xz` (17.6 MB), with the upstream layer digest
+   recorded next to it so anyone can check it against Docker Hub.
+   Both formats of the 13.7 build extract cleanly with `SafeTarExtractor`:
+   3,266 entries, 1 hardlink, no device nodes, 98 MiB unpacked.
+2. Size: ~18 MB download (xz) vs ~4 MB for Alpine. Show it in the picker.
 3. Probe: `uname -m`, `/etc/debian_version`, `$HOME`, `command -v apt-get`,
    `command -v sh`, wrapped in `debian_probe_begin` / `debian_probe_end`.
 4. First-boot fix-ups inside the rootfs (run once, as root):
@@ -145,7 +153,7 @@ Ship-safe on its own. **Estimate: ~1 day.**
 ### Phase 5: UI
 
 1. Onboarding: "Linux distribution" step with two cards. Alpine (default,
-   ~4 MB, "small and fast") and Debian (experimental, ~30 MB, "glibc, wider
+   ~4 MB, "small and fast") and Debian (experimental, ~18 MB, "glibc, wider
    tool support").
 2. Settings: same choice. Switching installs the other rootfs if needed, then
    flips `active.json`. Both stay on disk. Show size used per distro, with a

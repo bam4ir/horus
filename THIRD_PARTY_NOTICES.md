@@ -43,6 +43,29 @@ Font License, Version 1.1; the full license text ships next to the font as
 `android/app/src/main/assets/fonts/NotoSansSymbols2-OFL.txt`.
 
 
+# xz decompressor
+
+Horus uses [XZ for Java](https://github.com/tukaani-project/xz-java) 1.10
+(`org.tukaani:xz` from Maven Central) to unpack `.tar.xz` rootfs archives.
+
+Upstream license: <https://github.com/tukaani-project/xz-java/blob/v1.10/COPYING>
+
+```text
+Copyright (C) The XZ for Java authors and contributors
+
+Permission to use, copy, modify, and/or distribute this
+software for any purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL
+WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL
+THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR
+CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
 # PRoot runtime
 
 `native/` holds the sources of the PRoot runtime, which the Gradle build

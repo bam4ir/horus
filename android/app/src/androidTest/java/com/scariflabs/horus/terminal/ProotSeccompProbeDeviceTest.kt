@@ -233,7 +233,7 @@ class ProotSeccompProbeDeviceTest {
     val readOnlyStore = DistroStoreCore(
       paths = realPaths,
       downloader = HttpArchiveDownloader(),
-      extractor = SafeTarGzExtractor(),
+      extractor = SafeTarExtractor(),
       prober = ProotGuestProber(runtime, File(testRoot, "prober-scratch")),
     )
     val record = readOnlyStore.readActiveRecord()

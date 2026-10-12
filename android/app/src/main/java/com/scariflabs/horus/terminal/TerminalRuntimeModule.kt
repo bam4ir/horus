@@ -82,7 +82,7 @@ class TerminalRuntimeModule(
     DistroStoreCore(
       paths = DistroStorePaths(File(appContext.filesDir, TerminalRuntimeContract.STORAGE_ROOT_DIR_NAME)),
       downloader = HttpArchiveDownloader(),
-      extractor = SafeTarGzExtractor(),
+      extractor = SafeTarExtractor(),
       prober = prootProber(),
     )
   }

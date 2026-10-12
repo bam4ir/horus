@@ -35,12 +35,14 @@ class DistroStoreCoreTest {
 
   private class FakeExtractor(private val failWith: Exception? = null) : DistroStoreCore.RootfsExtractor {
     var calls = 0
-    override fun extract(archive: File, destinationRoot: File): SafeTarGzExtractor.Summary {
+    var lastFormat: ArchiveFormat? = null
+    override fun extract(archive: File, destinationRoot: File, format: ArchiveFormat): SafeTarExtractor.Summary {
       calls++
+      lastFormat = format
       failWith?.let { throw it }
       File(destinationRoot, "etc").mkdirs()
       File(destinationRoot, "etc/alpine-release").writeText("3.24.0\n")
-      return SafeTarGzExtractor.Summary(2, 1, 1, 0, 0, emptyList(), 12)
+      return SafeTarExtractor.Summary(2, 1, 1, 0, 0, emptyList(), 12)
     }
   }
 
@@ -107,6 +109,21 @@ class DistroStoreCoreTest {
     assertFalse(store.storage.archiveInIncoming(AlpineRootfsCatalog.ROOTFS_ID).exists())
     // User data survived untouched.
     assertEquals("home data", sentinel.readText())
+  }
+
+  @Test
+  fun `the extractor decompresses with the catalog entry's archive format`() {
+    val gzip = FakeExtractor()
+    newStore(extractor = gzip).install(rootfsId = installParams().first, expectedSha256 = installParams().second, expectedBytes = installParams().third)
+    assertEquals(ArchiveFormat.TAR_GZ, gzip.lastFormat)
+
+    val xz = FakeExtractor()
+    newStore(extractor = xz).install(
+      entry = RootfsCatalog.ALPINE.copy(archiveFormat = ArchiveFormat.TAR_XZ),
+      expectedSha256 = installParams().second,
+      expectedBytes = installParams().third,
+    )
+    assertEquals(ArchiveFormat.TAR_XZ, xz.lastFormat)
   }
 
   @Test

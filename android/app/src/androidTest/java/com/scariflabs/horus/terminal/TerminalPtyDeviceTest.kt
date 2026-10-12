@@ -163,7 +163,7 @@ class TerminalPtyDeviceTest {
     val store = DistroStoreCore(
       paths = paths,
       downloader = HttpArchiveDownloader(),
-      extractor = SafeTarGzExtractor(),
+      extractor = SafeTarExtractor(),
       prober = ProotGuestProber(runtime, File(paths.sessions, ".proot-scratch")),
     )
     val sink = OutputSink()

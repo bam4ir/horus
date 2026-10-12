@@ -320,6 +320,9 @@ dependencies {
         implementation jscFlavor
     }
 
+    // Pure-Java xz decoder for .tar.xz rootfs archives (0BSD).
+    implementation("org.tukaani:xz:1.10")
+
     testImplementation("junit:junit:4.13.2")
     // Local JVM tests otherwise resolve Android's deliberately non-functional
     // org.json stubs instead of the real parser used by the file journal.

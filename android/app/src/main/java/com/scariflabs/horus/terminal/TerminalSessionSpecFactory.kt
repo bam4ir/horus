@@ -41,7 +41,7 @@ class TerminalSessionSpecFactory(
   private val store = DistroStoreCore(
     paths = paths,
     downloader = HttpArchiveDownloader(),
-    extractor = SafeTarGzExtractor(),
+    extractor = SafeTarExtractor(),
     // Session/provisioning startup only reads the verified active record.
     // Rootfs installation remains owned by TerminalRuntimeModule in the UI
     // process.
