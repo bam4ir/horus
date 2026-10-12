@@ -103,9 +103,19 @@ Ship-safe on its own. **Estimate: ~1 day.**
    recorded next to it so anyone can check it against Docker Hub.
    Both formats of the 13.7 build extract cleanly with `SafeTarExtractor`:
    3,266 entries, 1 hardlink, no device nodes, 98 MiB unpacked.
+   Published 2026-10-12 as release `rootfs-debian-13.7-20261005`:
+   `debian-trixie-slim-13.7-arm64.tar.xz`, 17,386,584 bytes, sha256
+   `c4a40504d8eddd7d47125d129296352d3758b1d0ce958bd517b44631aee74eb5`,
+   built with `gunzip -c rootfs.tar.gz | xz -6 -T1` (XZ Utils 5.8.3,
+   byte-identical on rerun). Catalog id: `debian-13.7-20261005-aarch64`; the
+   build date is in the id because Debian rebuilds a point release with
+   security fixes.
 2. Size: ~18 MB download (xz) vs ~4 MB for Alpine. Show it in the picker.
 3. Probe: `uname -m`, `/etc/debian_version`, `$HOME`, `command -v apt-get`,
    `command -v sh`, wrapped in `debian_probe_begin` / `debian_probe_end`.
+   Debian is merged-usr, so the checks run `/usr/bin/*` and expect
+   `/usr/bin/apt-get` and `/usr/bin/sh` under the prober's PATH. Not yet
+   run on a device.
 4. First-boot fix-ups inside the rootfs (run once, as root):
    - `/etc/apt/apt.conf.d/99horus`: `APT::Sandbox::User "root";` (apt cannot
      drop to `_apt` under PRoot), `Acquire::Retries "3"`,

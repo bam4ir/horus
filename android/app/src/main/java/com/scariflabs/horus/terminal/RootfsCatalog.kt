@@ -30,9 +30,10 @@ data class RootfsCatalogEntry(
     get() = listOf(probeBegin) + probeChecks.map(ProbeCheck::expected) + probeEnd
 }
 
-/** Every distribution Horus can install. Alpine is the default and the only one so far. */
+/** Every distribution Horus can install. Alpine is the default. */
 object RootfsCatalog {
   const val DISTRO_ALPINE = "alpine"
+  const val DISTRO_DEBIAN = "debian"
 
   /** Alpine's record shape since 1.0.0; still written for Alpine so downgrades keep working. */
   const val LEGACY_ALPINE_RECORD_SCHEMA = AlpineRootfsCatalog.MANIFEST_SCHEMA_VERSION
@@ -59,9 +60,37 @@ object RootfsCatalog {
     ),
   )
 
+  /**
+   * Debian 13 (trixie) slim, pinned 2026-10-12: debuerreotype's 20261005
+   * arm64v8 build, recompressed to xz and hosted as a Horus release asset,
+   * because debuerreotype's dist branch is force-pushed and its raw URLs do
+   * not last. The tar inside is unchanged: `xz -dc` of the asset hashes to
+   * the image layer's diff_id, 258ba1f62b513e7bb7492d3cc8ce445e4ef176a14980f193f789b6d7270ae61c.
+   *
+   * Debian is merged-usr (/bin -> usr/bin), so the probe runs /usr/bin directly.
+   */
+  val DEBIAN = RootfsCatalogEntry(
+    distro = DISTRO_DEBIAN,
+    rootfsId = "debian-13.7-20261005-aarch64",
+    release = "13.7",
+    url = "https://github.com/scarif-labs/horus/releases/download/rootfs-debian-13.7-20261005/debian-trixie-slim-13.7-arm64.tar.xz",
+    sha256 = "c4a40504d8eddd7d47125d129296352d3758b1d0ce958bd517b44631aee74eb5",
+    sizeBytes = 17_386_584L,
+    archiveFormat = ArchiveFormat.TAR_XZ,
+    probeBegin = "debian_probe_begin",
+    probeEnd = "debian_probe_end",
+    probeChecks = listOf(
+      RootfsCatalogEntry.ProbeCheck(listOf("/usr/bin/uname", "-m"), AlpineRootfsCatalog.EXPECTED_GUEST_ARCH),
+      RootfsCatalogEntry.ProbeCheck(listOf("/usr/bin/cat", "/etc/debian_version"), "13.7"),
+      RootfsCatalogEntry.ProbeCheck(listOf("/usr/bin/sh", "-c", "printf '%s\\n' \"\$HOME\""), "/root"),
+      RootfsCatalogEntry.ProbeCheck(listOf("/usr/bin/sh", "-c", "command -v apt-get"), "/usr/bin/apt-get"),
+      RootfsCatalogEntry.ProbeCheck(listOf("/usr/bin/sh", "-c", "command -v sh"), "/usr/bin/sh"),
+    ),
+  )
+
   val DEFAULT: RootfsCatalogEntry = ALPINE
 
-  val entries: List<RootfsCatalogEntry> = listOf(ALPINE)
+  val entries: List<RootfsCatalogEntry> = listOf(ALPINE, DEBIAN)
 
   fun byId(rootfsId: String?): RootfsCatalogEntry? = entries.firstOrNull { it.rootfsId == rootfsId }
 }

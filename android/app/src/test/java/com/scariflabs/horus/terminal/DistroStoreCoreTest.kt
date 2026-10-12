@@ -51,19 +51,7 @@ class DistroStoreCoreTest {
     override fun probe(rootfsDir: File, guestHomeDir: File, timeoutMs: Long, entry: RootfsCatalogEntry): GuestProbeResult {
       calls++
       result?.let { return it }
-      return GuestProbeResult(
-        exitCode = 0,
-        output = listOf(
-          "alpine_probe_begin",
-          "aarch64",
-          "3.24.0",
-          "/root",
-          "/sbin/apk",
-          "/bin/sh",
-          "alpine_probe_end",
-        ).joinToString("\n"),
-        durationMs = 5,
-      )
+      return GuestProbeResult(exitCode = 0, output = entry.probeMarkers.joinToString("\n"), durationMs = 5)
     }
   }
 
@@ -268,6 +256,55 @@ class DistroStoreCoreTest {
       store.storage.activeRecord.writeText(json)
       assertNull(json, store.readActiveRecord())
     }
+  }
+
+  @Test
+  fun `a debian install writes a v2 record and leaves alpine installed beside it`() {
+    val store = newStore()
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    val outcome = store.install(entry = RootfsCatalog.DEBIAN, expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    assertTrue(outcome.toString(), outcome is DistroStoreCore.InstallOutcome.Success)
+
+    val json = org.json.JSONObject(store.storage.activeRecord.readText())
+    assertEquals(RootfsCatalog.RECORD_SCHEMA, json.getInt("schemaVersion"))
+    assertEquals("debian", json.getString("distro"))
+    assertEquals("13.7", json.getString("release"))
+    assertFalse(json.has("alpineRelease"))
+
+    val active = store.readActiveRecord()
+    assertNotNull(active)
+    assertEquals(RootfsCatalog.DEBIAN.rootfsId, active!!.rootfsId)
+    assertEquals(RootfsCatalog.DISTRO_DEBIAN, active.distro)
+    assertEquals(RootfsCatalog.DEBIAN.probeMarkers, active.probeMarkers)
+    assertEquals(
+      setOf(AlpineRootfsCatalog.ROOTFS_ID, RootfsCatalog.DEBIAN.rootfsId),
+      store.installedVersionIds().toSet(),
+    )
+  }
+
+  @Test
+  fun `a debian rootfs that probes like alpine is never promoted`() {
+    val alpineProbe = GuestProbeResult(exitCode = 0, output = RootfsCatalog.ALPINE.probeMarkers.joinToString("\n"), durationMs = 5)
+    val store = newStore(prober = FakeProber(alpineProbe))
+    val outcome = store.install(entry = RootfsCatalog.DEBIAN, expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    assertTrue(outcome.toString(), outcome is DistroStoreCore.InstallOutcome.Failure)
+    assertNull(store.readActiveRecord())
+  }
+
+  @Test
+  fun `the catalog pins every entry to a distinct id digest and marker block`() {
+    val entries = RootfsCatalog.entries
+    assertEquals(RootfsCatalog.ALPINE, RootfsCatalog.DEFAULT)
+    assertEquals(entries.size, entries.map { it.rootfsId }.toSet().size)
+    assertEquals(entries.size, entries.map { it.sha256 }.toSet().size)
+    assertEquals(entries.size, entries.map { it.probeBegin }.toSet().size)
+    for (entry in entries) {
+      assertTrue(entry.rootfsId, AlpineRootfsCatalog.isValidRootfsId(entry.rootfsId))
+      assertTrue(entry.rootfsId, Regex("^[a-f0-9]{64}$").matches(entry.sha256))
+      assertTrue(entry.rootfsId, entry.url.startsWith("https://"))
+      assertEquals(entry, RootfsCatalog.byId(entry.rootfsId))
+    }
+    assertEquals(ArchiveFormat.TAR_XZ, RootfsCatalog.DEBIAN.archiveFormat)
   }
 
   @Test

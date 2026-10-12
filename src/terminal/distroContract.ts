@@ -57,6 +57,7 @@ export type RootfsCatalogEntry = Readonly<{
 }>;
 
 export const ROOTFS_DISTRO_ALPINE = 'alpine';
+export const ROOTFS_DISTRO_DEBIAN = 'debian';
 
 export const ALPINE_ROOTFS: RootfsCatalogEntry = {
   distro: ROOTFS_DISTRO_ALPINE,
@@ -68,8 +69,27 @@ export const ALPINE_ROOTFS: RootfsCatalogEntry = {
   probeMarkers: PINNED_PROBE_MARKERS,
 };
 
+/** Debian 13 slim, recompressed to xz and hosted as a Horus release asset (see RootfsCatalog.kt). */
+export const DEBIAN_ROOTFS: RootfsCatalogEntry = {
+  distro: ROOTFS_DISTRO_DEBIAN,
+  rootfsId: 'debian-13.7-20261005-aarch64',
+  release: '13.7',
+  sha256: 'c4a40504d8eddd7d47125d129296352d3758b1d0ce958bd517b44631aee74eb5',
+  sizeBytes: 17_386_584,
+  url: 'https://github.com/scarif-labs/horus/releases/download/rootfs-debian-13.7-20261005/debian-trixie-slim-13.7-arm64.tar.xz',
+  probeMarkers: [
+    'debian_probe_begin',
+    'aarch64',
+    '13.7',
+    '/root',
+    '/usr/bin/apt-get',
+    '/usr/bin/sh',
+    'debian_probe_end',
+  ],
+};
+
 /** Every distribution the app can install. Alpine is the default. */
-export const ROOTFS_CATALOG: readonly RootfsCatalogEntry[] = [ALPINE_ROOTFS];
+export const ROOTFS_CATALOG: readonly RootfsCatalogEntry[] = [ALPINE_ROOTFS, DEBIAN_ROOTFS];
 export const DEFAULT_ROOTFS: RootfsCatalogEntry = ALPINE_ROOTFS;
 
 export function rootfsCatalogEntry(rootfsId: unknown): RootfsCatalogEntry | undefined {

@@ -170,8 +170,10 @@ class DistroStoreCore(
     }
 
     // The guest must prove itself before promotion.
+    // The markers to require come from the catalog entry, never from the
+    // prober's result, so another distribution's probe output cannot pass.
     val probe = try {
-      prober.probe(stagingRootfs, paths.home, 60_000, entry)
+      prober.probe(stagingRootfs, paths.home, 60_000, entry).copy(requiredLines = entry.probeMarkers)
     } catch (error: Exception) {
       deleteQuietly(staging)
       return InstallOutcome.Failure(rootfsId, "probe", "probe_failed", error.message ?: "probe failure")

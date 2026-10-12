@@ -1,5 +1,6 @@
 import {
   buildInstallRootfsRequest,
+  DEBIAN_ROOTFS,
   buildResetRuntimeRequest,
   isInstallRootfsResponse,
   isResetRuntimeResponse,
@@ -103,6 +104,24 @@ describe('isInstallRootfsResponse', () => {
     expect(isInstallRootfsResponse({requestId: 'install-1', status: 'error', errorCode: 'digest_mismatch'})).toBe(true);
     expect(isInstallRootfsResponse({requestId: 'install-1', status: 'error'})).toBe(false);
     expect(isInstallRootfsResponse({requestId: '../bad', status: 'error', errorCode: 'download_failed'})).toBe(false);
+  });
+
+  it('validates a debian install against the debian entry, not alpine', () => {
+    const debian = {
+      ...success,
+      rootfsId: DEBIAN_ROOTFS.rootfsId,
+      archiveSha256: DEBIAN_ROOTFS.sha256,
+      archiveBytes: DEBIAN_ROOTFS.sizeBytes,
+      probeMarkers: [...DEBIAN_ROOTFS.probeMarkers],
+    };
+    expect(buildInstallRootfsRequest('install-1', DEBIAN_ROOTFS.rootfsId)).toEqual({
+      requestId: 'install-1',
+      rootfsId: DEBIAN_ROOTFS.rootfsId,
+    });
+    expect(isInstallRootfsResponse(debian)).toBe(true);
+    expect(isInstallRootfsResponse({...debian, probeMarkers: [...PINNED_PROBE_MARKERS]})).toBe(false);
+    expect(isInstallRootfsResponse({...debian, archiveSha256: PINNED_ROOTFS_SHA256})).toBe(false);
+    expect(isInstallRootfsResponse({...debian, archiveBytes: PINNED_ROOTFS_SIZE_BYTES})).toBe(false);
   });
 
   it('rejects a success with a malformed digest or unknown rootfs id', () => {

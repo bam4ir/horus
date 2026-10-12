@@ -20,6 +20,7 @@ import {
   TERMINAL_RUNTIME_SCHEMA_VERSION,
 } from '../src/terminal/runtimeStatus';
 import {
+  DEBIAN_ROOTFS,
   PINNED_ALPINE_RELEASE,
   PINNED_PROBE_MARKERS,
   PINNED_ROOTFS_ID,
@@ -91,7 +92,7 @@ describe('isTerminalRuntimeStatusResponse', () => {
 
   it('requires the active distro and release to match the catalog entry', () => {
     const ready = {
-      runtimeState: 'ready',
+      runtimeState: 'ready' as const,
       activeRootfsId: PINNED_ROOTFS_ID,
       activeDistro: 'alpine',
       activeRelease: PINNED_ALPINE_RELEASE,
@@ -116,6 +117,23 @@ describe('isTerminalRuntimeStatusResponse', () => {
     expect(
       isTerminalRuntimeStatusResponse(successResponse({runtimeState: 'not_installed', activeDistro: 'alpine'})),
     ).toBe(false);
+  });
+
+  it('accepts an active debian rootfs, which never reports activeAlpineRelease', () => {
+    const debian = {
+      runtimeState: 'ready' as const,
+      activeRootfsId: DEBIAN_ROOTFS.rootfsId,
+      activeDistro: 'debian',
+      activeRelease: DEBIAN_ROOTFS.release,
+      activeRootfsSha256: DEBIAN_ROOTFS.sha256,
+      activeInstalledAt: '2026-10-12T00:00:00.000Z',
+      installedVersionIds: [PINNED_ROOTFS_ID, DEBIAN_ROOTFS.rootfsId],
+    };
+    expect(isTerminalRuntimeStatusResponse(successResponse(debian))).toBe(true);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...debian, activeAlpineRelease: '13.7'}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...debian, activeDistro: 'alpine'}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...debian, activeRootfsSha256: PINNED_ROOTFS_SHA256}))).toBe(false);
+    expect(isTerminalRuntimeStatusResponse(successResponse({...debian, installedVersionIds: [PINNED_ROOTFS_ID]}))).toBe(false);
   });
 
   it('rejects active metadata that disagrees with runtime state', () => {
