@@ -1297,6 +1297,76 @@ class ProotSessionLauncherTest {
     }
   }
 
+  @Test
+  fun givesOnlyTheProfileUsersSessionsARootHelperForSudo() {
+    val base = Files.createTempDirectory("horus-root-helper").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("cpu 1\n")
+      File(hostProc, "loadavg").writeText("0 0 0\n")
+      val hostDev = File(base, "dev").apply { mkdirs() }
+      listOf("null", "zero", "random", "urandom", "tty", "ptmx").forEach { File(hostDev, it).writeText("") }
+      File(hostDev, "pts").mkdirs()
+      val launcher = ProotSessionLauncher(
+        runtime = ProotRuntimeLocator.LocatedRuntime(
+          prootBin = File(base, "libproot.so"),
+          loaderBin = File(base, "libproot_loader.so"),
+          libraryDir = base,
+          prootVersion = "5.4.0",
+        ),
+        scratchDir = File(base, "scratch"),
+        hostProcDir = hostProc,
+        hostDevDir = hostDev,
+      )
+      val sudo = File(rootfs, ProotSessionLauncher.GUEST_SUDO_PATH.trimStart('/'))
+      val helper = File(rootfs, ProotSessionLauncher.GUEST_ROOT_HELPER_PATH.trimStart('/'))
+
+      val harness = launcher.toolchainSessionLaunchSpec(
+        rootfs, home, guestUsername = "harness_codex", guestUid = 61_002, target = TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
+      )
+      assertFalse(harness.environment.contains("HORUS_ROOT_HELPER=1"))
+      assertFalse(harness.argv.contains("${File(hostDev, "pts").absolutePath}:/dev/pts"))
+      assertFalse(sudo.exists())
+
+      val own = launcher.toolchainSessionLaunchSpec(
+        rootfs, home, guestUsername = "nefer", target = TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL, rootHelper = true, provision = false,
+      )
+      assertTrue(own.environment.contains("HORUS_ROOT_HELPER=1"))
+      assertTrue(own.environment.contains("HORUS_SKIP_TOOLCHAIN_PROVISION=1"))
+      val binds = own.argv.windowed(2).filter { it[0] == "-b" }.map { it[1] }
+      assertTrue(binds.contains("${File(hostDev, "ptmx").absolutePath}:/dev/ptmx"))
+      assertTrue(binds.contains("${File(hostDev, "pts").absolutePath}:/dev/pts"))
+      val script = own.argv[own.argv.size - 7]
+      assertTrue(script.contains("${ProotSessionLauncher.GUEST_ROOT_HELPER_PATH} \"${'$'}HORUS_SUDO_SOCKET\" \"${'$'}session_uid\""))
+      assertTrue(script.indexOf("HORUS_SUDO_SOCKET") < script.indexOf("setpriv --reuid"))
+      for (file in listOf(sudo, helper)) {
+        assertTrue("${file.name} is not executable", file.isFile && file.canExecute())
+        assertTrue(file.readText().startsWith("#!/usr/bin/python3\n"))
+      }
+
+      val remote = launcher.remoteAccessLaunchSpec(rootfs, home, workspaceDir = null, guestUsername = "nefer").argv
+      assertTrue(remote[remote.size - 6].contains("${ProotSessionLauncher.GUEST_ROOT_HELPER_PATH} /run/horus-sudo/ssh"))
+
+      // A stale copy is replaced; a symlink planted on the way is never followed.
+      sudo.writeText("old")
+      launcher.toolchainSessionLaunchSpec(rootfs, home, guestUsername = "nefer", target = TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL, rootHelper = true)
+      assertTrue(sudo.readText().startsWith("#!/usr/bin/python3\n"))
+      val outside = File(base, "outside").apply { mkdirs() }
+      File(rootfs, "usr/local/bin").deleteRecursively()
+      Files.createSymbolicLink(File(rootfs, "usr/local/bin").toPath(), outside.toPath())
+      assertThrows(IllegalStateException::class.java) {
+        launcher.toolchainSessionLaunchSpec(rootfs, home, guestUsername = "nefer", target = TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL, rootHelper = true)
+      }
+      assertTrue(outside.listFiles().isNullOrEmpty())
+
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
   private fun launcher(base: File, hostProc: File, scratch: File = File(base, "scratch")): ProotSessionLauncher =
     ProotSessionLauncher(
       runtime = ProotRuntimeLocator.LocatedRuntime(

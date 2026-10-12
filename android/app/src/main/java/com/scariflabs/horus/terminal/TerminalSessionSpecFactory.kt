@@ -119,6 +119,7 @@ class TerminalSessionSpecFactory(
           sessionCommand = sessionCommand,
           target = toolchainTarget,
           provision = !toolchainReady,
+          rootHelper = harnessUser == null,
         )
       }
       BuildOutcome.Success(

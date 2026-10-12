@@ -215,6 +215,18 @@ root cannot satisfy); Alpine keeps `busybox su`. Debian's zsh does not read
 for now, and the remote agent installer cannot apt-install as the user (the
 app's tiles install system packages as root).
 
+`sudo` (2026-10-12): a real sudo cannot work, because our PRoot build leaves
+out setuid emulation (`USERLAND` is not defined, so `fake_id0/exec.c` is not
+compiled). Instead, the profile user's own sessions (app terminal and SSH,
+never a harness) start a root helper (`/usr/local/lib/horus/sudo-helper`)
+before dropping to the user, and `/usr/local/bin/sudo` asks it to run
+commands, without a password. Sources live in
+`android/app/src/main/resources/.../terminal/guest/`. Each helper is reachable
+only inside its own PRoot process (long socket paths become per-process
+bindings), and it checks the caller's emulated uid as well. Tested on the
+Redmi: `sudo apt-get install`, pipes, a pty with Ctrl-C, `sudo -i`, and
+refusal from another session.
+
 ### Phase 5: Users and UI
 
 Done as a user per distribution rather than a distro setting:

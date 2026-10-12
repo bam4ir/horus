@@ -119,6 +119,11 @@ class ProotSessionLauncher(
     term: String = DEFAULT_TERM,
     sessionCommand: String? = null,
     provision: Boolean = true,
+    /**
+     * Starts the root helper behind `sudo` before the session drops to its
+     * user. Only the profile user's own sessions get it, never a harness's.
+     */
+    rootHelper: Boolean = false,
   ): LaunchSpec {
     require(TerminalRuntimeContract.isValidToolchainTarget(target)) { "toolchain target is invalid" }
     val command = sessionCommand ?: "exec zsh -l"
@@ -131,6 +136,7 @@ class ProotSessionLauncher(
       "/home/$guestUsername"
     }
     val sessionWorkingDirectory = if (workspaceDir == null) guestHomePath else "/workspace"
+    if (rootHelper) installRootHelper(rootfsDir)
     val launch = buildLaunchSpec(
       rootfsDir = rootfsDir,
       guestHomeDir = guestHomeDir,
@@ -152,9 +158,15 @@ class ProotSessionLauncher(
       guestUid = guestUid,
       guestGid = guestGid,
       forceRootIdentity = true,
+      // sudo runs commands on their own pseudo-terminal, as SSH logins do.
+      extraDeviceBinds = if (rootHelper) ptyDeviceBinds() else emptyList(),
     )
-    if (provision) return launch
-    return launch.copy(environment = launch.environment + "HORUS_SKIP_TOOLCHAIN_PROVISION=1")
+    val environment = buildList {
+      addAll(launch.environment)
+      if (rootHelper) add("HORUS_ROOT_HELPER=1")
+      if (!provision) add("HORUS_SKIP_TOOLCHAIN_PROVISION=1")
+    }
+    return launch.copy(environment = environment)
   }
 
   /**
@@ -174,6 +186,7 @@ class ProotSessionLauncher(
   ): LaunchSpec {
     require(guestUsername != GUEST_ROOT_USER) { "remote access needs a non-root profile user" }
     require(port in 1025..65535) { "remote access port is invalid" }
+    installRootHelper(rootfsDir)
     return buildLaunchSpec(
       rootfsDir = rootfsDir,
       guestHomeDir = guestHomeDir,
@@ -197,7 +210,7 @@ class ProotSessionLauncher(
       // home only as /home/<user>.
       bindHomeAtRoot = false,
       // SSH logins allocate their own pseudo-terminals inside the guest.
-      extraDeviceBinds = listOf(File(hostDevDir, "ptmx") to "$GUEST_DEV/ptmx", File(hostDevDir, "pts") to "$GUEST_DEV/pts"),
+      extraDeviceBinds = ptyDeviceBinds(),
     )
   }
 
@@ -363,6 +376,51 @@ class ProotSessionLauncher(
       // the Phase 1 prober; the guest sees the selected bind through PRoot's -w.
       workingDirectory = null,
     )
+  }
+
+  private fun ptyDeviceBinds(): List<Pair<File, String>> =
+    listOf(File(hostDevDir, "ptmx") to "$GUEST_DEV/ptmx", File(hostDevDir, "pts") to "$GUEST_DEV/pts")
+
+  /**
+   * Writes `sudo` and its root helper into the rootfs. The guest owns the
+   * rootfs, so a directory on the way may be a symlink planted there; never
+   * write through one, or the app could overwrite its own files.
+   */
+  private fun installRootHelper(rootfsDir: File) {
+    ROOT_HELPER_FILES.forEach { (resource, guestPath) ->
+      val content = requireNotNull(ProotSessionLauncher::class.java.getResourceAsStream("/com/scariflabs/horus/terminal/guest/$resource")) {
+        "missing guest resource $resource"
+      }.use { it.readBytes() }
+      var directory = rootfsDir
+      guestPath.trim('/').split('/').dropLast(1).forEach { part ->
+        directory = File(directory, part)
+        if (Files.isSymbolicLink(directory.toPath())) {
+          throw IllegalStateException("guest path /$guestPath goes through a symlink")
+        }
+        if (!directory.isDirectory && !directory.mkdir() && !directory.isDirectory) {
+          throw IllegalStateException("cannot create guest directory for /$guestPath")
+        }
+      }
+      val target = File(rootfsDir, guestPath.trim('/'))
+      if (!Files.isSymbolicLink(target.toPath()) && target.isFile && target.canExecute() && target.readBytes().contentEquals(content)) {
+        return@forEach
+      }
+      var temporary: File? = null
+      try {
+        temporary = File.createTempFile("${target.name}-", ".tmp", directory)
+        temporary.writeBytes(content)
+        temporary.setReadable(true, false)
+        temporary.setExecutable(true, false)
+        Files.move(
+          temporary.toPath(),
+          target.toPath(),
+          StandardCopyOption.ATOMIC_MOVE,
+          StandardCopyOption.REPLACE_EXISTING,
+        )
+      } finally {
+        temporary?.takeIf { it.exists() }?.delete()
+      }
+    }
   }
 
   private fun prepareDeviceBinds(): List<DeviceBind> {
@@ -1007,6 +1065,9 @@ class ProotSessionLauncher(
     private val GUEST_ACCOUNT_MUTATION_LOCK = Any()
     const val GUEST_PATH = "/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     const val GUEST_LANG = "C.UTF-8"
+    const val GUEST_SUDO_PATH = "/usr/local/bin/sudo"
+    const val GUEST_ROOT_HELPER_PATH = "/usr/local/lib/horus/sudo-helper"
+    private val ROOT_HELPER_FILES = listOf("sudo" to GUEST_SUDO_PATH, "sudo-helper" to GUEST_ROOT_HELPER_PATH)
     const val HOST_PROC = "/proc"
     const val HOST_DEV = "/dev"
     const val GUEST_PROC = "/proc"
@@ -1608,6 +1669,14 @@ EOF
         chgrp "${'$'}session_gid" /workspace
         chmod 2770 /workspace
       fi
+      # sudo cannot become root under PRoot once the session drops to its
+      # user; a helper started now, while still root, runs its commands.
+      if [ "${'$'}{HORUS_ROOT_HELPER:-0}" = 1 ] && [ -x /usr/bin/python3 ] && [ -f $GUEST_ROOT_HELPER_PATH ]; then
+        mkdir -p /run/horus-sudo
+        export HORUS_SUDO_SOCKET="/run/horus-sudo/s${'$'}${'$'}"
+        /usr/bin/python3 $GUEST_ROOT_HELPER_PATH "${'$'}HORUS_SUDO_SOCKET" "${'$'}session_uid" </dev/null >/dev/null 2>>/run/horus-sudo/helper.log &
+      fi
+      unset HORUS_ROOT_HELPER
       user_script='
         cd "${'$'}HORUS_SESSION_PWD"
         umask 0002
@@ -1802,6 +1871,11 @@ EOF
       fi
       HORUS_ZSH
       mv -f /etc/zsh/zshrc.d/horus-ssh.zsh.tmp /etc/zsh/zshrc.d/horus-ssh.zsh
+      # sudo for SSH logins, as for the app's own terminal (see sudo-helper).
+      if [ -x /usr/bin/python3 ] && [ -f $GUEST_ROOT_HELPER_PATH ]; then
+        mkdir -p /run/horus-sudo
+        /usr/bin/python3 $GUEST_ROOT_HELPER_PATH /run/horus-sudo/ssh "${'$'}uid" </dev/null >/dev/null 2>>/run/horus-sudo/helper.log &
+      fi
       stage serving
       # Everything below execs in place, so this pid becomes dropbear's; the
       # app kills it and its sessions on stop (PRoot does not take them down).
