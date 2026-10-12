@@ -667,7 +667,9 @@ class ProotSessionLauncherTest {
       assertTrue(script.contains("pkgs_shell=\"ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh\""))
       assertTrue(script.contains("apk add --no-cache --no-progress"))
       assertTrue(script.contains("force-unsafe-io"))
-      assertTrue(script.contains("pkgs_shell=\"ca-certificates curl git jq less openssh-client python3 ripgrep tzdata zsh\""))
+      assertTrue(script.contains("pkgs_shell=\"ca-certificates curl git jq less openssh-client python3 python3-venv ripgrep tzdata zsh\""))
+      // Installs from before python3-venv joined the list get it on their next shell.
+      assertTrue(script.contains("|| ! has_python_venv; then"))
       assertTrue(script.contains("apt_with_status install -y --no-install-recommends"))
       assertTrue(script.contains("APT::Sandbox::User \"root\";"))
       assertTrue(launch.argv.last().contains("command -v git"))

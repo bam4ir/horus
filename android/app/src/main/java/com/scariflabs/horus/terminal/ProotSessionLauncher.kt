@@ -1195,7 +1195,12 @@ class ProotSessionLauncher(
     internal val PACKAGE_MANAGER_SCRIPT = """
       if [ -x /usr/bin/apt-get ]; then
         horus_pkg=apt
-        pkgs_shell="ca-certificates curl git jq less openssh-client python3 ripgrep tzdata zsh"
+        # Debian splits venv (and its ensurepip) out of python3.
+        pkgs_shell="ca-certificates curl git jq less openssh-client python3 python3-venv ripgrep tzdata zsh"
+        has_python_venv() {
+          for venv_dir in /usr/lib/python3.*/ensurepip; do [ -d "${'$'}venv_dir" ] && return 0; done
+          return 1
+        }
         pkgs_github="ca-certificates git openssh-client gh zsh"
         pkgs_claude="bash curl ca-certificates git openssh-client zsh"
         pkgs_node="bash ca-certificates git openssh-client nodejs npm zsh"
@@ -1219,6 +1224,7 @@ class ProotSessionLauncher(
         pkgs_claude="bash curl ca-certificates git openssh-client-default zsh libgcc libstdc++"
         pkgs_node="bash ca-certificates git openssh-client-default nodejs npm zsh libgcc libstdc++"
         pkgs_procps="procps-ng"
+        has_python_venv() { true; }
       fi
       # The latest progress line, for the app to show while tools install.
       pkg_progress=/root/.cache/horus/provision-progress
@@ -1410,7 +1416,7 @@ class ProotSessionLauncher(
         if ! command -v zsh >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1 ||
           [ ! -x /usr/bin/rg ] || [ ! -x /usr/bin/curl ] || [ ! -x /usr/bin/jq ] ||
           [ ! -x /usr/bin/python3 ] || [ ! -e /lib/ld-linux-aarch64.so.1 ] ||
-          [ ! -x /usr/bin/less ] || [ ! -e /usr/share/zoneinfo/UTC ]; then
+          [ ! -x /usr/bin/less ] || [ ! -e /usr/share/zoneinfo/UTC ] || ! has_python_venv; then
           mark_provision_stage apk
           if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_shell; then
             # PRoot cannot create zsh's versioned hardlink (bin/zsh-5.9) on
