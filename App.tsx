@@ -195,11 +195,12 @@ function App(): React.JSX.Element {
     installRootfs: async () => finishOnboardingRootfs(await installRootfs(BOOT_REQUEST_ID)),
     importRootfs: async () => finishOnboardingRootfs(await importRootfs(IMPORT_REQUEST_ID)),
     saveProfile: async (password, {skipTools, onToolsReady}) => {
-      const setup = await setupOnboardingProfile(password, nextSessionRequestId('onboarding-shell'), {onToolsReady, skipTools});
+      const user = {distro: 'alpine', username: 'horus', avatar: 'falcon'} as const;
+      const setup = await setupOnboardingProfile({...user, password}, nextSessionRequestId('onboarding-shell'), {onToolsReady, skipTools});
       if (setup.kind === 'success') {
         void updateUnlockGrant('grant');
         setLockNotice(undefined);
-        setProfile({hasPassword: true});
+        setProfile({users: [user]});
       }
       return setup;
     },
@@ -219,7 +220,7 @@ function App(): React.JSX.Element {
       setProfileError('Incorrect password.');
       return;
     }
-    const check = await verifyUserPassword(password);
+    const check = await verifyUserPassword(profile.users[0].distro, password);
     if (check.kind !== 'success') {
       setProfileError(check.kind === 'locked' ? lockedOutMessage(check.retryAfterMs) : 'Incorrect password.');
       return;

@@ -595,7 +595,7 @@ class ProotSessionLauncher(
         if (!isFixedProfileIdentity(username, uid, gid)) {
           throw IllegalStateException("guest uid is already occupied")
         }
-        val migrated = migrateLegacyProfileAccount(passwdLines, groupLines, shadowLines)
+        val migrated = migrateLegacyProfileAccount(passwdLines, groupLines, shadowLines, username)
         passwdLines = migrated.passwd
         groupLines = migrated.group
         shadowLines = migrated.shadow
@@ -659,14 +659,20 @@ class ProotSessionLauncher(
     val shadow: List<String>,
   )
 
+  /** The profile user's uid and gid, under whatever name the user chose. */
   private fun isFixedProfileIdentity(username: String, uid: Int, gid: Int): Boolean =
-    username == PROFILE_USERNAME && uid == GUEST_UID && gid == GUEST_GID
+    username != GUEST_ROOT_USER && uid == GUEST_UID && gid == GUEST_GID
 
-  /** Renames only the exact account row format written by the former profile flow. */
+  /**
+   * Renames the profile uid's account to [profileUsername]. Accepts only the
+   * exact row format Horus writes, so it covers the 1.0.x custom-name accounts
+   * and a rootfs whose account predates the configured name.
+   */
   private fun migrateLegacyProfileAccount(
     passwdLines: List<String>,
     groupLines: List<String>,
     shadowLines: List<String>,
+    profileUsername: String,
   ): GuestAccountLines {
     val uidRows = passwdLines.filter { it.split(':').getOrNull(2) == GUEST_UID.toString() }
     if (uidRows.size != 1) throw IllegalStateException("legacy profile uid is ambiguous")
@@ -685,7 +691,7 @@ class ProotSessionLauncher(
     ) {
       throw IllegalStateException("legacy profile account does not match the prior format")
     }
-    if (passwdLines.any { it.substringBefore(':') == PROFILE_USERNAME && it != uidRows.single() }) {
+    if (passwdLines.any { it.substringBefore(':') == profileUsername && it != uidRows.single() }) {
       throw IllegalStateException("fixed profile username is already occupied")
     }
     if (groupLines.any { line ->
@@ -697,7 +703,7 @@ class ProotSessionLauncher(
     }
 
     val legacyGroupIndexes = groupLines.indices.filter { groupLines[it].substringBefore(':') == legacyUsername }
-    val profileGroupIndexes = groupLines.indices.filter { groupLines[it].substringBefore(':') == PROFILE_USERNAME }
+    val profileGroupIndexes = groupLines.indices.filter { groupLines[it].substringBefore(':') == profileUsername }
     val gidRows = groupLines.filter { it.split(':').getOrNull(2) == GUEST_GID.toString() }
     if (legacyGroupIndexes.size > 1) throw IllegalStateException("legacy profile group is ambiguous")
     var migratedGroups = groupLines
@@ -715,7 +721,7 @@ class ProotSessionLauncher(
         throw IllegalStateException("legacy profile group does not match the prior format")
       }
       migratedGroups = groupLines.mapIndexed { row, line ->
-        if (row == index) listOf(PROFILE_USERNAME, groupFields[1], groupFields[2], "").joinToString(":") else line
+        if (row == index) listOf(profileUsername, groupFields[1], groupFields[2], "").joinToString(":") else line
       }
     } else if (profileGroupIndexes.isNotEmpty()) {
       // A prior interrupted migration may already have renamed the group but
@@ -724,7 +730,7 @@ class ProotSessionLauncher(
       if (
         profileGroupIndexes.size != 1 ||
         gidRows.size != 1 ||
-        profileGroup != "$PROFILE_USERNAME:x:$GUEST_GID:"
+        profileGroup != "$profileUsername:x:$GUEST_GID:"
       ) {
         throw IllegalStateException("fixed profile group conflicts with migration")
       }
@@ -734,13 +740,13 @@ class ProotSessionLauncher(
     }
 
     val legacyShadowIndexes = shadowLines.indices.filter { shadowLines[it].substringBefore(':') == legacyUsername }
-    val profileShadowIndexes = shadowLines.indices.filter { shadowLines[it].substringBefore(':') == PROFILE_USERNAME }
+    val profileShadowIndexes = shadowLines.indices.filter { shadowLines[it].substringBefore(':') == profileUsername }
     if (legacyShadowIndexes.size > 1 || profileShadowIndexes.size > 1 ||
       (legacyShadowIndexes.isNotEmpty() && profileShadowIndexes.isNotEmpty())
     ) {
       throw IllegalStateException("legacy profile shadow entry is ambiguous")
     }
-    val lockedShadowEntry = "$PROFILE_USERNAME:!:19000:0:99999:7:::"
+    val lockedShadowEntry = "$profileUsername:!:19000:0:99999:7:::"
     val migratedShadow = when {
       profileShadowIndexes.isNotEmpty() -> {
         if (profileShadowIndexes.size != 1 || shadowLines[profileShadowIndexes.single()] != lockedShadowEntry) {
@@ -765,7 +771,7 @@ class ProotSessionLauncher(
 
     val migratedPasswd = passwdLines.map { line ->
       if (line == uidRows.single()) {
-        listOf(PROFILE_USERNAME, fields[1], fields[2], fields[3], PROFILE_USERNAME, "/home/$PROFILE_USERNAME", fields[6]).joinToString(":")
+        listOf(profileUsername, fields[1], fields[2], fields[3], profileUsername, "/home/$profileUsername", fields[6]).joinToString(":")
       } else {
         line
       }
@@ -999,7 +1005,6 @@ class ProotSessionLauncher(
     const val GUEST_ROOT_USER = "root"
     const val GUEST_UID = 1000
     const val GUEST_GID = 1000
-    private const val PROFILE_USERNAME = TerminalGuestIdentity.PROFILE_USERNAME
     private val GUEST_ACCOUNT_MUTATION_LOCK = Any()
     const val GUEST_PATH = "/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     const val GUEST_LANG = "C.UTF-8"

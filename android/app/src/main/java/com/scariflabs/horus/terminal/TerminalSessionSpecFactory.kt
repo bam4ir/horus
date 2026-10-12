@@ -79,7 +79,7 @@ class TerminalSessionSpecFactory(
     if (located !is ProotRuntimeLocator.Location.Available) {
       return BuildOutcome.Failure("runtime_unavailable")
     }
-    val profileUsername = TerminalGuestIdentity.readStoredUsername(context)
+    val profileUsername = activeProfileUsername()
       ?: ProotSessionLauncher.GUEST_ROOT_USER
     val harnessUser = TerminalHarnessUsers.forTarget(toolchainTarget, profileUsername)
     val guestUsername = harnessUser?.username ?: profileUsername
@@ -156,7 +156,7 @@ class TerminalSessionSpecFactory(
     if (located !is ProotRuntimeLocator.Location.Available) {
       return ProvisionBuildOutcome.Failure("runtime_unavailable")
     }
-    val profileUsername = TerminalGuestIdentity.readStoredUsername(context)
+    val profileUsername = activeProfileUsername()
       ?: ProotSessionLauncher.GUEST_ROOT_USER
     val harnessUser = TerminalHarnessUsers.forTarget(target, profileUsername)
     val guestHomeDir = harnessUser?.let { paths.harnessHome(it.homeKey) } ?: paths.home
@@ -190,7 +190,7 @@ class TerminalSessionSpecFactory(
 
   /** Builds the loopback-only SSH server launch for the profile user. */
   fun buildRemoteAccess(): RemoteAccessBuildOutcome {
-    val profileUsername = TerminalGuestIdentity.readStoredUsername(context)
+    val profileUsername = activeProfileUsername()
       ?: return RemoteAccessBuildOutcome.Failure("profile_missing")
     val rootfsDir = try {
       store.ensureLayout()
@@ -227,6 +227,16 @@ class TerminalSessionSpecFactory(
       )
       RemoteAccessBuildOutcome.Failure("internal_error")
     }
+  }
+
+  /** The Linux user of the distribution sessions run in: the active rootfs's. */
+  fun activeProfileUsername(): String? {
+    val distro = try {
+      store.readActiveRecord()?.distro
+    } catch (_: Exception) {
+      null
+    } ?: RootfsCatalog.DISTRO_ALPINE
+    return TerminalGuestIdentity.readStoredUsername(context, distro)
   }
 
   private fun locateProotRuntime(): ProotRuntimeLocator.Location = packagedProotRuntime

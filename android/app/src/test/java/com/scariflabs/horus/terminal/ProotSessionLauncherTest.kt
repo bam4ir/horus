@@ -199,6 +199,37 @@ class ProotSessionLauncherTest {
   }
 
   @Test
+  fun renamesTheProfileAccountToTheConfiguredUsername() {
+    // A rootfs set up as "horus" whose user is now configured as "vishesh":
+    // the profile uid is renamed in place, never duplicated.
+    val base = Files.createTempDirectory("horus-profile-rename").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      val etc = File(rootfs, "etc").apply { mkdirs() }
+      val passwd = File(etc, "passwd").apply {
+        writeText("root:x:0:0:root:/root:/bin/sh\nhorus:x:1000:1000:horus:/home/horus:/bin/sh\n")
+      }
+      val group = File(etc, "group").apply { writeText("root:x:0:\nhorus:x:1000:\n") }
+      val shadow = File(etc, "shadow").apply {
+        writeText("root:!:19000:0:99999:7:::\nhorus:!:19000:0:99999:7:::\n")
+      }
+      val home = File(base, "home").apply { mkdirs() }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("live stat\n")
+      File(hostProc, "loadavg").writeText("0.01 0.02 0.03 1/2 3\n")
+
+      val launch = launcher(base, hostProc).interactiveShellLaunchSpec(rootfs, home, guestUsername = "vishesh")
+
+      assertTrue(launch.argv.windowed(2).any { it == listOf("-b", "${home.canonicalPath}:/home/vishesh") })
+      assertEquals("root:x:0:0:root:/root:/bin/sh\nvishesh:x:1000:1000:vishesh:/home/vishesh:/bin/sh\n", passwd.readText())
+      assertEquals("root:x:0:\nvishesh:x:1000:\n", group.readText())
+      assertEquals("root:!:19000:0:99999:7:::\nvishesh:!:19000:0:99999:7:::\n", shadow.readText())
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
   fun resumesAnInterruptedLegacyProfileMigration() {
     val base = Files.createTempDirectory("horus-profile-migration-retry").toFile()
     try {
