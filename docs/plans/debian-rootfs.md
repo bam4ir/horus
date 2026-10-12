@@ -114,8 +114,12 @@ Ship-safe on its own. **Estimate: ~1 day.**
 3. Probe: `uname -m`, `/etc/debian_version`, `$HOME`, `command -v apt-get`,
    `command -v sh`, wrapped in `debian_probe_begin` / `debian_probe_end`.
    Debian is merged-usr, so the checks run `/usr/bin/*` and expect
-   `/usr/bin/apt-get` and `/usr/bin/sh` under the prober's PATH. Not yet
-   run on a device.
+   `/usr/bin/apt-get` and `/usr/bin/sh` under the prober's PATH.
+   `DebianRootfsDeviceTest` passed on the Redmi Note 10 Pro (Android 16)
+   on 2026-10-12: download, extraction, and probe in 14.5 s beside Alpine.
+   It also confirmed `dpkg --print-architecture` is `arm64`, glibc's
+   `/lib/ld-linux-aarch64.so.1` exists, and apt uses deb822
+   `/etc/apt/sources.list.d/debian.sources`.
 4. First-boot fix-ups inside the rootfs (run once, as root):
    - `/etc/apt/apt.conf.d/99horus`: `APT::Sandbox::User "root";` (apt cannot
      drop to `_apt` under PRoot), `Acquire::Retries "3"`,
