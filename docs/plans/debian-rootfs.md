@@ -2,6 +2,51 @@
 
 Tracking: [#3](https://github.com/scarif-labs/horus/issues/3)
 
+## Status (2026-10-12)
+
+Branch `debian-rootfs`, not pushed. Phases 1–5 are done; Phase 6 is partly
+done.
+
+| Phase | State | Commits |
+| --- | --- | --- |
+| 1. Rootfs catalog | Done | `f7bbb4d` |
+| 2. xz archives | Done | `9e274e8` |
+| 3. Debian rootfs and probe | Done; asset published as release `rootfs-debian-13.7-20261005` | `9f80f63`, `3d4edcf` |
+| 4. apt provisioning | Done | `ceaa8ad`, `de9c8d7` |
+| 5. Users and UI | Done (see Phase 5) | `870987f`, `4657bbd`, `ae8f075`, `cf262bb`, `de9c8d7` |
+| 6. Testing | Partly done (below) | |
+
+Verified on the test phone (Redmi Note 10 Pro, Android 16):
+
+- Onboarding with Debian, user `nefer`: the shell runs as `nefer`,
+  `/etc/debian_version` is 13.7, and `$HOME` is `/home/nefer`.
+  "Installing packages… N%" shows under "Installing tools".
+- `DebianToolchainDeviceTest`: shell, gh, Claude Code (glibc build), Codex,
+  and OpenCode all provision with apt and run as their users.
+- `PackageProgressDeviceTest`: progress lines on both distributions. The
+  shell install takes 188 s on Debian and 17 s on Alpine. Most of Debian's
+  time goes to package setup scripts: `update-ca-certificates` (~32 s) and
+  Python byte-compiling its standard library (~49 s).
+- `DebianRootfsDeviceTest`, `TerminalRuntimeDeviceTest`: pass.
+- Unit tests: 247 Kotlin and 356 JS tests pass.
+
+Not done yet:
+
+- Manual matrix: signing in as the other user to switch, adding the second
+  user from Settings, remote access over USB on Debian, reset, upgrade from
+  1.0.4, and downgrade.
+- Removing a distribution, renaming a user, and a Debian mirror setting.
+- On Debian, the SSH-only Claude messaging wrapper (Debian's zsh does not
+  read `/etc/zsh/zshrc.d`).
+- Optional: leave Python out of Debian's default tools to save about 50 s.
+
+Failing on `main` too, so not caused by this branch:
+
+- `TerminalToolchainDeviceTest#provisionsHarnessTargetsBeforeTheirInteractiveSessions`
+  fails at "opencode repaired executable probe".
+- `TerminalToolchainDeviceTest#installsBaseProfileAndKeepsItAcrossNewShellSession`
+  waits for a `# ` prompt that the zsh theme no longer prints.
+
 ## Goal
 
 Let users pick Debian instead of Alpine. Alpine uses musl, and a lot of
