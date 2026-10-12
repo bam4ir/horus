@@ -318,6 +318,8 @@ function App(): React.JSX.Element {
       eyebrow: 'RECENT SESSION',
       sessionId: session.sessionId,
       toolchain: session.toolchain,
+      // "Open again" after the app quits restarts this, not a plain shell.
+      ...(session.command !== undefined ? {command: session.command} : {}),
     });
   }, [openTarget]);
 

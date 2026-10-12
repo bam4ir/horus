@@ -485,10 +485,12 @@ export function isListTerminalSessionsResponse(
   }
   const seenIds = new Set<string>();
   return value.sessions.every(session => {
-    if (!isRecord(session) || !hasOnlyKeys(session, ['sessionId', 'toolchain', 'startedAtMs'])) return false;
+    if (!isRecord(session) || !hasOnlyKeys(session, ['sessionId', 'toolchain', 'startedAtMs', 'command'])) return false;
     if (!isValidTerminalSessionId(session.sessionId) || seenIds.has(session.sessionId)) return false;
     if (typeof session.toolchain !== 'string' || !TERMINAL_TOOLCHAIN_TARGETS.includes(session.toolchain as TerminalToolchainTarget)) return false;
     if (!isSafeIntegerInRange(session.startedAtMs, 0, Number.MAX_SAFE_INTEGER)) return false;
+    if (session.command !== undefined &&
+      (typeof session.command !== 'string' || session.command.length === 0 || session.command.length > TERMINAL_SESSION_MAX_COMMAND_LENGTH)) return false;
     seenIds.add(session.sessionId);
     return true;
   });

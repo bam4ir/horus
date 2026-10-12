@@ -1093,6 +1093,7 @@ class TerminalRuntimeModule(
             val sessionId = item.getString(TerminalSessionServiceProtocol.KEY_SESSION_ID)
             val target = item.getString(TerminalSessionServiceProtocol.KEY_TARGET)
             val startedAtMs = item.getLong(TerminalSessionServiceProtocol.KEY_STARTED_AT_MS, -1L)
+            val command = item.getString(TerminalSessionServiceProtocol.KEY_COMMAND)
             if (TerminalSessionContract.isValidSessionId(sessionId) &&
               TerminalRuntimeContract.isValidToolchainTarget(target) &&
               startedAtMs >= 0L
@@ -1102,6 +1103,9 @@ class TerminalRuntimeModule(
                   putString("sessionId", sessionId)
                   putString("toolchain", target)
                   putDouble("startedAtMs", startedAtMs.toDouble())
+                  if (command != null && command.isNotEmpty() && command.length <= TerminalSessionContract.MAX_COMMAND_LENGTH) {
+                    putString("command", command)
+                  }
                 },
               )
             }

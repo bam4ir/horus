@@ -958,6 +958,8 @@ class TerminalSessionService : Service() {
           putString(TerminalSessionServiceProtocol.KEY_SESSION_ID, record.sessionId)
           putString(TerminalSessionServiceProtocol.KEY_TARGET, record.toolchainTarget ?: TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL)
           putLong(TerminalSessionServiceProtocol.KEY_STARTED_AT_MS, record.startedAtMs)
+          // Lets a reopened session start the same app again after it quits.
+          record.command?.let { putString(TerminalSessionServiceProtocol.KEY_COMMAND, it) }
         }
       }
     sendResponse(

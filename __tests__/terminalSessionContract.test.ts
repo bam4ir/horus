@@ -12,6 +12,7 @@ import {
   isSignalSessionResponse,
   isStartSessionResponse,
   isStopSessionResponse,
+  isListTerminalSessionsResponse,
   isSubscribeSessionEventsResponse,
   isTerminalSessionEvent,
   isTerminalSessionExitEvent,
@@ -393,6 +394,19 @@ describe('wire response validators', () => {
         'a-1',
       ),
     ).toBe(false);
+  });
+});
+
+describe('session list validator', () => {
+  const session = {sessionId: 's-1-1', toolchain: 'codex', startedAtMs: 1};
+  const list = (sessions: unknown[]) => ({requestId: 'list-1', status: 'success', sessions});
+
+  test('carries the launch command when the native side has one', () => {
+    expect(isListTerminalSessionsResponse(list([session]), 'list-1')).toBe(true);
+    expect(isListTerminalSessionsResponse(list([{...session, command: 'cd /workspace && exec codex'}]), 'list-1')).toBe(true);
+    expect(isListTerminalSessionsResponse(list([{...session, command: ''}]), 'list-1')).toBe(false);
+    expect(isListTerminalSessionsResponse(list([{...session, command: 7}]), 'list-1')).toBe(false);
+    expect(isListTerminalSessionsResponse(list([{...session, command: 'x'.repeat(4097)}]), 'list-1')).toBe(false);
   });
 });
 

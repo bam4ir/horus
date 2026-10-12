@@ -261,6 +261,8 @@ export type TerminalSessionSummary = {
   sessionId: string;
   toolchain: TerminalToolchainTarget;
   startedAtMs: number;
+  /** The command the session was started with, to start it again. */
+  command?: string;
 };
 
 export type ListTerminalSessionsRequest = {
