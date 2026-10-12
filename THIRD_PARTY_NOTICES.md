@@ -66,6 +66,14 @@ NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
+# Avatar hieroglyphs
+
+The nine user avatars in `assets/avatars/` (falcon, ibis, jackal, cat, cobra,
+scarab, lotus, papyrus, sun disk) were generated for Horus with OpenAI's image
+generation through Codex CLI, from the prompt in
+`assets/avatars/source/PROMPT.md`. The 1024 px originals are in
+`assets/avatars/source/`; the app ships transparent 96 dp copies cut from them.
+
 # PRoot runtime
 
 `native/` holds the sources of the PRoot runtime, which the Gradle build
