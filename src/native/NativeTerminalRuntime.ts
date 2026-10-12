@@ -72,6 +72,7 @@ export const TERMINAL_RUNTIME_ERROR_CODES = [
   'toolchain_codex_install_failed',
   'toolchain_opencode_install_failed',
   'toolchain_normalization_failed',
+  'not_installed',
 ] as const;
 
 export type TerminalRuntimeErrorCode =
@@ -99,7 +100,8 @@ export type TerminalRuntimeErrorCode =
   | 'toolchain_github_install_failed'
   | 'toolchain_codex_install_failed'
   | 'toolchain_opencode_install_failed'
-  | 'toolchain_normalization_failed';
+  | 'toolchain_normalization_failed'
+  | 'not_installed';
 
 export type TerminalRuntimeStatusResponse = {
   status: 'success' | 'error';
@@ -161,6 +163,23 @@ export type InstallRootfsRequest = {
   requestId: string;
   /** Optional; must match the pinned catalog id when present. */
   rootfsId?: string;
+  /**
+   * Defaults to true. False installs the rootfs beside the active one, e.g.
+   * for a second user, without switching new sessions to it.
+   */
+  makeActive?: boolean;
+};
+
+export type ActivateRootfsRequest = {
+  requestId: string;
+  rootfsId: string;
+};
+
+export type ActivateRootfsResponse = {
+  requestId: string;
+  status: 'success' | 'error';
+  rootfsId?: string;
+  errorCode?: TerminalRuntimeErrorCode;
 };
 
 export type InstallRootfsResponse = {
@@ -520,6 +539,8 @@ export interface Spec extends TurboModule {
   installRootfs(request: InstallRootfsRequest): Promise<InstallRootfsResponse>;
   /** Opens the system file picker and installs the archive the user picks. */
   importRootfs(request: InstallRootfsRequest): Promise<InstallRootfsResponse>;
+  /** Points new sessions at an installed rootfs without reinstalling it. */
+  activateRootfs(request: ActivateRootfsRequest): Promise<ActivateRootfsResponse>;
   provisionToolchain(request: ProvisionToolchainRequest): Promise<ProvisionToolchainResponse>;
   resetRuntime(request: ResetRuntimeRequest): Promise<ResetRuntimeResponse>;
   startSession(request: StartSessionRequest): Promise<StartSessionResponse>;

@@ -1,4 +1,6 @@
 import type {
+  ActivateRootfsRequest,
+  ActivateRootfsResponse,
   InstallRootfsRequest,
   InstallRootfsResponse,
   ResetRuntimeRequest,
@@ -96,6 +98,11 @@ export function rootfsCatalogEntry(rootfsId: unknown): RootfsCatalogEntry | unde
   return ROOTFS_CATALOG.find(entry => entry.rootfsId === rootfsId);
 }
 
+/** The pinned rootfs for a distribution: one per distribution. */
+export function rootfsForDistro(distro: string): RootfsCatalogEntry | undefined {
+  return ROOTFS_CATALOG.find(entry => entry.distro === distro);
+}
+
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const ROOTFS_ID_PATTERN = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -178,10 +185,28 @@ export function isValidTerminalRuntimeErrorCode(
 export function buildInstallRootfsRequest(
   requestId: string,
   rootfsId: string = DEFAULT_ROOTFS.rootfsId,
+  makeActive?: boolean,
 ): InstallRootfsRequest | null {
   if (!isValidRequestId(requestId)) return null;
   if (rootfsCatalogEntry(rootfsId) === undefined) return null;
+  return makeActive === undefined ? {requestId, rootfsId} : {requestId, rootfsId, makeActive};
+}
+
+export function buildActivateRootfsRequest(requestId: string, rootfsId: string): ActivateRootfsRequest | null {
+  if (!isValidRequestId(requestId) || rootfsCatalogEntry(rootfsId) === undefined) return null;
   return {requestId, rootfsId};
+}
+
+export function isActivateRootfsResponse(value: unknown): value is ActivateRootfsResponse {
+  if (!isRecord(value) || !isValidRequestId(value.requestId)) return false;
+  if (value.status === 'error') {
+    return hasOnlyKeys(value, ['requestId', 'status', 'errorCode']) && isKnownErrorCode(value.errorCode);
+  }
+  return (
+    value.status === 'success' &&
+    hasOnlyKeys(value, ['requestId', 'status', 'rootfsId']) &&
+    rootfsCatalogEntry(value.rootfsId) !== undefined
+  );
 }
 
 export function buildResetRuntimeRequest(

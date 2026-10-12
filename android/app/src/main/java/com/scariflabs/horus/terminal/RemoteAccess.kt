@@ -115,17 +115,26 @@ object RemoteAccess {
   class Store(storageRoot: File) {
     private val paths = DistroStorePaths(storageRoot)
     val dir = File(storageRoot, DIR_NAME)
+    // Alpine's home holds the canonical list. Every distribution's user home
+    // gets a copy, so a paired computer reaches whichever user is active.
     private val sshDir = File(paths.home, ".ssh")
     private val authorizedKeys = File(sshDir, "authorized_keys")
+    private val mirroredSshDirs = paths.userHomes().filter { it != paths.home }.map { File(it, ".ssh") }
     private val enabledFile = File(dir, "enabled")
     private val statusFile = File(dir, "status")
     val logFile = File(dir, "server.log")
-    /** Written by dropbear itself; survives the service being killed. */
-    val serverPidFile = File(paths.home, ".cache/horus/dropbear.pid")
+    /** Written by dropbear itself, in the home of the user it runs as; survives the service being killed. */
+    val serverPidFiles = paths.userHomes().map { File(it, ".cache/horus/dropbear.pid") }
 
-    fun readServerPid(): Long = runCatching {
-      if (serverPidFile.length() > 32) 0L else serverPidFile.readText(Charsets.US_ASCII).trim().toLong()
-    }.getOrDefault(0L)
+    fun readServerPid(): Long = serverPidFiles.firstNotNullOfOrNull { file ->
+      runCatching {
+        if (!file.isFile || file.length() > 32) null else file.readText(Charsets.US_ASCII).trim().toLong()
+      }.getOrNull()
+    } ?: 0L
+
+    fun deleteServerPidFiles() {
+      serverPidFiles.forEach(File::delete)
+    }
 
     fun keys(): List<AuthorizedKey> = synchronized(lock) { parseAuthorizedKeys(readAuthorizedKeys()) }
 
@@ -186,6 +195,20 @@ object RemoteAccess {
       sshDir.setWritable(false, false); sshDir.setWritable(true, true)
       sshDir.setExecutable(false, false); sshDir.setExecutable(true, true)
       atomicWrite(authorizedKeys, content)
+      for (mirror in mirroredSshDirs) {
+        // Only homes that exist: a distribution without a user has nothing to log in to.
+        if (!mirror.parentFile!!.isDirectory) continue
+        if (!mirror.isDirectory && !mirror.mkdirs()) throw IllegalStateException("cannot create .ssh")
+        mirror.setReadable(false, false); mirror.setReadable(true, true)
+        mirror.setWritable(false, false); mirror.setWritable(true, true)
+        mirror.setExecutable(false, false); mirror.setExecutable(true, true)
+        atomicWrite(File(mirror, "authorized_keys"), content)
+      }
+    }
+
+    /** Copies the paired keys into a user home created after they were added. */
+    fun syncKeysToHomes() = synchronized(lock) {
+      writeAuthorizedKeys(readAuthorizedKeys())
     }
 
     /**
@@ -193,7 +216,7 @@ object RemoteAccess {
      * key write could land on an app-private file outside the guest.
      */
     private fun rejectSymlinks() {
-      listOf(paths.home, sshDir, authorizedKeys).forEach { file ->
+      (listOf(paths.home, sshDir, authorizedKeys) + paths.userHomes() + mirroredSshDirs + mirroredSshDirs.map { File(it, "authorized_keys") }).forEach { file ->
         if (Files.isSymbolicLink(file.toPath())) throw IllegalStateException("${file.name} is a symbolic link")
       }
     }

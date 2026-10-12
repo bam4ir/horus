@@ -19,7 +19,7 @@ object TerminalGuestIdentity {
       PasswordGate.PROFILE_PREFERENCES,
       Context.MODE_PRIVATE or Context.MODE_MULTI_PROCESS,
     )
-    return ProfileUsersCore(PasswordGate.PreferenceValues(preferences), PasswordGate.AndroidProfileBase64)
+    return ProfileUsersCore(PasswordGate.PreferenceValues(preferences))
       .user(distro)
       ?.username
   }

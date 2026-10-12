@@ -109,6 +109,39 @@ class RemoteAccessTest {
   }
 
   @Test
+  fun `paired keys reach every distribution's user home and the server pid is found in either`() {
+    val base = Files.createTempDirectory("horus-remote-homes").toFile()
+    try {
+      val store = RemoteAccess.Store(base)
+      store.addKey(valid())
+      val debianKeys = File(base, "homes/debian/home/.ssh/authorized_keys")
+      // No Debian user yet, so nothing is created for it.
+      assertFalse(debianKeys.exists())
+
+      File(base, "homes/debian/home").mkdirs()
+      store.syncKeysToHomes()
+      assertEquals(File(base, "home/.ssh/authorized_keys").readText(), debianKeys.readText())
+      assertTrue(store.removeKey(ed25519Fingerprint))
+      assertFalse(debianKeys.readText().contains("ssh-ed25519"))
+
+      // A Debian ~/.ssh link planted by the guest is refused too.
+      File(base, "homes/debian/home/.ssh").deleteRecursively()
+      val target = File(base, "elsewhere").apply { mkdirs() }
+      Files.createSymbolicLink(File(base, "homes/debian/home/.ssh").toPath(), target.toPath())
+      assertThrows(IllegalStateException::class.java) { store.addKey(valid()) }
+      assertFalse(File(target, "authorized_keys").exists())
+
+      File(base, "homes/debian/home/.cache/horus").mkdirs()
+      File(base, "homes/debian/home/.cache/horus/dropbear.pid").writeText("4242\n")
+      assertEquals(4242L, store.readServerPid())
+      store.deleteServerPidFiles()
+      assertEquals(0L, store.readServerPid())
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `store tracks the switch and server status`() {
     val base = Files.createTempDirectory("horus-remote-state").toFile()
     try {

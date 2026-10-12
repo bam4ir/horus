@@ -15,12 +15,6 @@ interface ProfileKeyValues {
   fun commit(changes: Map<String, Any?>)
 }
 
-/** Standard, padded, unwrapped Base64: android.util.Base64 in the app (API 24), java.util.Base64 in JVM tests. */
-interface ProfileBase64 {
-  fun encode(bytes: ByteArray): String
-  fun decode(text: String): ByteArray
-}
-
 /** One Linux user: at most one per distribution. */
 data class ProfileUser(val distro: String, val username: String, val avatar: String)
 
@@ -37,7 +31,6 @@ data class ProfileUser(val distro: String, val username: String, val avatar: Str
  */
 class ProfileUsersCore(
   private val store: ProfileKeyValues,
-  private val base64: ProfileBase64,
   private val clock: () -> Long = System::currentTimeMillis,
   private val iterations: Int = PASSWORD_ITERATIONS,
 ) {
@@ -74,8 +67,8 @@ class ProfileUsersCore(
     val verifier = derive(password, salt, iterations)
     val prefix = passwordPrefix(distro)
     val changes = mutableMapOf<String, Any?>(
-      prefix + KEY_PASSWORD_SALT to base64.encode(salt),
-      prefix + KEY_PASSWORD_VERIFIER to base64.encode(verifier),
+      prefix + KEY_PASSWORD_SALT to Base64Codec.encode(salt, padding = true),
+      prefix + KEY_PASSWORD_VERIFIER to Base64Codec.encode(verifier, padding = true),
       prefix + KEY_PASSWORD_ITERATIONS to iterations,
       usernameKey(distro) to username,
       avatarKey(distro) to avatar,
@@ -134,8 +127,9 @@ class ProfileUsersCore(
   private fun matches(distro: String, password: String): Boolean {
     val prefix = passwordPrefix(distro)
     return try {
-      val salt = base64.decode(store.string(prefix + KEY_PASSWORD_SALT) ?: return false)
-      val expected = base64.decode(store.string(prefix + KEY_PASSWORD_VERIFIER) ?: return false)
+      // Base64Codec writes the same padded, unwrapped form as the android.util.Base64 1.0.x used.
+      val salt = Base64Codec.decode(store.string(prefix + KEY_PASSWORD_SALT) ?: return false) ?: return false
+      val expected = Base64Codec.decode(store.string(prefix + KEY_PASSWORD_VERIFIER) ?: return false) ?: return false
       val rounds = store.int(prefix + KEY_PASSWORD_ITERATIONS, PASSWORD_ITERATIONS)
       if (rounds !in MIN_PASSWORD_ITERATIONS..MAX_PASSWORD_ITERATIONS) return false
       MessageDigest.isEqual(expected, derive(password, salt, rounds))

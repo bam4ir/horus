@@ -20,15 +20,10 @@ class ProfileUsersCoreTest {
     }
   }
 
-  private object JvmBase64 : ProfileBase64 {
-    override fun encode(bytes: ByteArray): String = Base64.getEncoder().encodeToString(bytes)
-    override fun decode(text: String): ByteArray = Base64.getDecoder().decode(text)
-  }
-
   private var now = 1_000_000L
   private val values = MapValues()
   // The lowest iteration count the store accepts, to keep the tests quick.
-  private val users = ProfileUsersCore(values, JvmBase64, clock = { now }, iterations = 50_000)
+  private val users = ProfileUsersCore(values, clock = { now }, iterations = 50_000)
 
   private val alpine = RootfsCatalog.DISTRO_ALPINE
   private val debian = RootfsCatalog.DISTRO_DEBIAN
@@ -39,8 +34,9 @@ class ProfileUsersCoreTest {
     val salt = ByteArray(16) { it.toByte() }
     val spec = PBEKeySpec("old-secret".toCharArray(), salt, 120_000, 256)
     val verifier = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
-    values.values["password_salt"] = JvmBase64.encode(salt)
-    values.values["password_verifier"] = JvmBase64.encode(verifier)
+    // android.util.Base64 NO_WRAP output, which is what 1.0.4 wrote.
+    values.values["password_salt"] = Base64.getEncoder().encodeToString(salt)
+    values.values["password_verifier"] = Base64.getEncoder().encodeToString(verifier)
     values.values["password_iterations"] = 120_000
     values.values["has_password"] = true
 

@@ -308,6 +308,62 @@ class DistroStoreCoreTest {
   }
 
   @Test
+  fun `a second distribution installs beside the active one and switching never reinstalls`() {
+    val extractor = FakeExtractor()
+    val store = newStore(extractor = extractor)
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    val beside = store.install(
+      entry = RootfsCatalog.DEBIAN,
+      expectedSha256 = archiveSha256,
+      expectedBytes = archiveBytes.size.toLong(),
+      makeActive = false,
+    )
+    assertTrue(beside.toString(), beside is DistroStoreCore.InstallOutcome.Success)
+    assertEquals(RootfsCatalog.DISTRO_ALPINE, store.readActiveRecord()!!.distro)
+    assertEquals(RootfsCatalog.DEBIAN.rootfsId, store.installedVersionFor(RootfsCatalog.DISTRO_DEBIAN))
+    assertEquals(AlpineRootfsCatalog.ROOTFS_ID, store.installedVersionFor(RootfsCatalog.DISTRO_ALPINE))
+
+    val installs = extractor.calls
+    assertTrue(store.activate(RootfsCatalog.DEBIAN.rootfsId))
+    assertEquals(RootfsCatalog.DISTRO_DEBIAN, store.readActiveRecord()!!.distro)
+    assertTrue(store.activate(AlpineRootfsCatalog.ROOTFS_ID))
+    assertEquals(RootfsCatalog.DISTRO_ALPINE, store.readActiveRecord()!!.distro)
+    // Alpine's active record is still the v1 shape an older Horus reads.
+    assertEquals(1, org.json.JSONObject(store.storage.activeRecord.readText()).getInt("schemaVersion"))
+    assertEquals(installs, extractor.calls)
+  }
+
+  @Test
+  fun `activating a version that is not installed changes nothing`() {
+    val store = newStore()
+    store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    val before = store.storage.activeRecord.readText()
+    assertFalse(store.activate(RootfsCatalog.DEBIAN.rootfsId))
+    assertFalse(store.activate("../escape"))
+    assertEquals(before, store.storage.activeRecord.readText())
+  }
+
+  @Test
+  fun `each distribution has its own home and a home reset clears them all`() {
+    val store = newStore()
+    val paths = store.storage
+    assertEquals(paths.home, paths.homeFor(RootfsCatalog.DISTRO_ALPINE))
+    assertEquals(File(paths.base, "homes/debian/home"), paths.homeFor(RootfsCatalog.DISTRO_DEBIAN))
+    assertEquals(paths.harnessHome("claude"), paths.harnessHomeFor(RootfsCatalog.DISTRO_ALPINE, "claude"))
+    assertEquals(File(paths.base, "homes/debian/harness-homes/claude"), paths.harnessHomeFor(RootfsCatalog.DISTRO_DEBIAN, "claude"))
+
+    store.install(entry = RootfsCatalog.DEBIAN, expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
+    // The probe ran against Debian's home, which now exists.
+    assertTrue(paths.homeFor(RootfsCatalog.DISTRO_DEBIAN).isDirectory)
+    File(paths.homeFor(RootfsCatalog.DISTRO_DEBIAN), "notes.txt").writeText("debian")
+
+    assertFalse(store.reset().homeRemoved)
+    assertTrue(File(paths.homeFor(RootfsCatalog.DISTRO_DEBIAN), "notes.txt").isFile)
+    assertTrue(store.reset(deleteHome = true).homeRemoved)
+    assertFalse(paths.distroHomes.exists())
+  }
+
+  @Test
   fun `a half-written active record reads as not installed`() {
     val store = newStore()
     store.storage.distro.mkdirs()

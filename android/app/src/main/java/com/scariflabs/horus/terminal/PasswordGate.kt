@@ -2,7 +2,6 @@ package com.scariflabs.horus.terminal
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.util.Base64
 
 /**
  * The app's handle on [ProfileUsersCore]: users, password verifiers, and
@@ -11,12 +10,6 @@ import android.util.Base64
  * counts against the same persisted lockout.
  */
 object PasswordGate {
-  /** Android's Base64, which 1.0.x used to store the Alpine verifier. */
-  object AndroidProfileBase64 : ProfileBase64 {
-    override fun encode(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
-    override fun decode(text: String): ByteArray = Base64.decode(text, Base64.NO_WRAP)
-  }
-
   /** SharedPreferences as [ProfileKeyValues]; commit() so a counted guess is on disk before it is answered. */
   class PreferenceValues(private val preferences: SharedPreferences) : ProfileKeyValues {
     override fun string(key: String): String? = preferences.getString(key, null)
@@ -43,7 +36,7 @@ object PasswordGate {
   /** One shared core per process, so its synchronized create and verify serialize every caller. */
   @Synchronized
   fun users(context: Context): ProfileUsersCore =
-    core ?: ProfileUsersCore(PreferenceValues(preferences(context)), AndroidProfileBase64).also { core = it }
+    core ?: ProfileUsersCore(PreferenceValues(preferences(context))).also { core = it }
 
   fun isConfigured(context: Context): Boolean = users(context).isConfigured()
 

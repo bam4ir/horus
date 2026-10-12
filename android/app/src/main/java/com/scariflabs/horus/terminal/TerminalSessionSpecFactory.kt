@@ -85,7 +85,11 @@ class TerminalSessionSpecFactory(
     val guestUsername = harnessUser?.username ?: profileUsername
     val guestUid = harnessUser?.uid ?: ProotSessionLauncher.GUEST_UID
     val guestGid = harnessUser?.gid ?: ProotSessionLauncher.GUEST_GID
-    val guestHomeDir = harnessUser?.let { paths.harnessHome(it.homeKey) } ?: paths.home
+    val guestHomeDir = try {
+      activeGuestHome(harnessUser)
+    } catch (_: Exception) {
+      return BuildOutcome.Failure("internal_error")
+    }
     return try {
       val launcher = ProotSessionLauncher(
         runtime = located.runtime,
@@ -159,7 +163,11 @@ class TerminalSessionSpecFactory(
     val profileUsername = activeProfileUsername()
       ?: ProotSessionLauncher.GUEST_ROOT_USER
     val harnessUser = TerminalHarnessUsers.forTarget(target, profileUsername)
-    val guestHomeDir = harnessUser?.let { paths.harnessHome(it.homeKey) } ?: paths.home
+    val guestHomeDir = try {
+      activeGuestHome(harnessUser)
+    } catch (_: Exception) {
+      return ProvisionBuildOutcome.Failure("internal_error")
+    }
     return try {
       val launcher = ProotSessionLauncher(
         runtime = located.runtime,
@@ -212,10 +220,13 @@ class TerminalSessionSpecFactory(
         dnsServersProvider = ::activeDnsServers,
         downloadSources = downloadSourceSettings.read(),
       )
+      val guestHomeDir = activeGuestHome(null)
+      // The active user's home may postdate the pairing; give it the paired keys.
+      RemoteAccess.Store(paths.base).syncKeysToHomes()
       RemoteAccessBuildOutcome.Success(
         launcher.remoteAccessLaunchSpec(
           rootfsDir = rootfsDir,
-          guestHomeDir = paths.home,
+          guestHomeDir = guestHomeDir,
           workspaceDir = paths.defaultWorkspace,
           guestUsername = profileUsername,
         ),
@@ -229,14 +240,22 @@ class TerminalSessionSpecFactory(
     }
   }
 
-  /** The Linux user of the distribution sessions run in: the active rootfs's. */
-  fun activeProfileUsername(): String? {
-    val distro = try {
-      store.readActiveRecord()?.distro
-    } catch (_: Exception) {
-      null
-    } ?: RootfsCatalog.DISTRO_ALPINE
-    return TerminalGuestIdentity.readStoredUsername(context, distro)
+  /** The distribution sessions run in: the active rootfs's. */
+  private fun activeDistro(): String = try {
+    store.readActiveRecord()?.distro
+  } catch (_: Exception) {
+    null
+  } ?: RootfsCatalog.DISTRO_ALPINE
+
+  /** The Linux user of the active distribution. */
+  fun activeProfileUsername(): String? = TerminalGuestIdentity.readStoredUsername(context, activeDistro())
+
+  /** The active distribution's home for [harnessUser], or its user home; created on first use. */
+  private fun activeGuestHome(harnessUser: TerminalHarnessUser?): File {
+    val distro = activeDistro()
+    val home = harnessUser?.let { paths.harnessHomeFor(distro, it.homeKey) } ?: paths.homeFor(distro)
+    if (!home.isDirectory && !home.mkdirs()) throw IllegalStateException("guest home is unavailable")
+    return home
   }
 
   private fun locateProotRuntime(): ProotRuntimeLocator.Location = packagedProotRuntime

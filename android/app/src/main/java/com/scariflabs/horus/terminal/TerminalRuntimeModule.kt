@@ -489,12 +489,7 @@ class TerminalRuntimeModule(
 
   override fun installRootfs(request: ReadableMap, promise: Promise) {
     withRequestId(request, promise, ::installError) { requestId ->
-      val requestedId = if (request.hasKey("rootfsId") && request.getType("rootfsId") == ReadableType.String) {
-        request.getString("rootfsId")
-      } else {
-        RootfsCatalog.DEFAULT.rootfsId
-      }
-      val entry = RootfsCatalog.byId(requestedId)
+      val entry = requestedCatalogEntry(request)
       if (entry == null) {
         promise.resolve(installError(requestId, "invalid_request"))
         return
@@ -504,7 +499,56 @@ class TerminalRuntimeModule(
         return
       }
       TerminalDebugLog.record(appContext, "module_rootfs_install_start request=$requestId")
-      runRootfsInstall(requestId, promise, entry, imported = null)
+      runRootfsInstall(requestId, promise, entry, imported = null, makeActive = requestedMakeActive(request))
+    }
+  }
+
+  /** The catalog entry a request names, Alpine when it names none, or null for an unknown id. */
+  private fun requestedCatalogEntry(request: ReadableMap): RootfsCatalogEntry? {
+    val requestedId = if (request.hasKey("rootfsId") && request.getType("rootfsId") == ReadableType.String) {
+      request.getString("rootfsId")
+    } else {
+      RootfsCatalog.DEFAULT.rootfsId
+    }
+    return RootfsCatalog.byId(requestedId)
+  }
+
+  private fun requestedMakeActive(request: ReadableMap): Boolean =
+    !(request.hasKey("makeActive") && request.getType("makeActive") == ReadableType.Boolean && !request.getBoolean("makeActive"))
+
+  /** Points new sessions at an installed rootfs, e.g. after signing in as the other distribution's user. */
+  override fun activateRootfs(request: ReadableMap, promise: Promise) {
+    withRequestId(request, promise, ::installError) { requestId ->
+      val entry = if (request.hasKey("rootfsId") && request.getType("rootfsId") == ReadableType.String) {
+        RootfsCatalog.byId(request.getString("rootfsId"))
+      } else {
+        null
+      }
+      if (entry == null) {
+        promise.resolve(installError(requestId, "invalid_request"))
+        return
+      }
+      if (installInProgress.get()) {
+        promise.resolve(installError(requestId, "install_in_progress"))
+        return
+      }
+      installExecutor.execute {
+        val response = try {
+          if (store.activate(entry.rootfsId)) {
+            TerminalDebugLog.record(appContext, "module_rootfs_activated request=$requestId distro=${entry.distro}")
+            Arguments.createMap().apply {
+              putString("requestId", requestId)
+              putString("status", "success")
+              putString("rootfsId", entry.rootfsId)
+            }
+          } else {
+            installError(requestId, "not_installed")
+          }
+        } catch (_: Exception) {
+          installError(requestId, "internal_error")
+        }
+        deliverInstallResponse(promise, response)
+      }
     }
   }
 
@@ -516,6 +560,12 @@ class TerminalRuntimeModule(
    */
   override fun importRootfs(request: ReadableMap, promise: Promise) {
     withRequestId(request, promise, ::installError) { requestId ->
+      val entry = requestedCatalogEntry(request)
+      if (entry == null) {
+        promise.resolve(installError(requestId, "invalid_request"))
+        return
+      }
+      val makeActive = requestedMakeActive(request)
       val activity = appContext.currentActivity
       if (activity == null) {
         promise.resolve(installError(requestId, "runtime_unavailable"))
@@ -536,7 +586,7 @@ class TerminalRuntimeModule(
             return
           }
           TerminalDebugLog.record(appContext, "module_rootfs_import_start request=$requestId")
-          runRootfsInstall(requestId, promise, RootfsCatalog.DEFAULT, imported = uri)
+          runRootfsInstall(requestId, promise, entry, imported = uri, makeActive = makeActive)
         }
       }
       appContext.addActivityEventListener(listener)
@@ -554,15 +604,21 @@ class TerminalRuntimeModule(
   }
 
   /** Runs one install on the install worker; the caller already holds installInProgress. */
-  private fun runRootfsInstall(responseRequestId: String, promise: Promise, entry: RootfsCatalogEntry, imported: Uri?) {
+  private fun runRootfsInstall(
+    responseRequestId: String,
+    promise: Promise,
+    entry: RootfsCatalogEntry,
+    imported: Uri?,
+    makeActive: Boolean,
+  ) {
     installExecutor.execute {
       val response = try {
         val outcome = if (imported == null) {
           // The download-source mirror setting only covers Alpine.
           val url = if (entry == RootfsCatalog.ALPINE) downloadSourceSettings.read().rootfsUrl else entry.url
-          store.install(entry, url = url)
+          store.install(entry, url = url, makeActive = makeActive)
         } else {
-          store.install(entry, source = ContentUriArchiveReader(appContext.contentResolver, imported))
+          store.install(entry, source = ContentUriArchiveReader(appContext.contentResolver, imported), makeActive = makeActive)
         }
         when (outcome) {
           is DistroStoreCore.InstallOutcome.Success -> {
@@ -1294,9 +1350,15 @@ class TerminalRuntimeModule(
     }.apply { allowCoreThreadTimeOut(true) }
   }
 
+  /** Browses the active distribution's user home, which is the home its sessions see. */
   private fun guestFileBrowser(): GuestFileBrowser {
     val storePaths = paths
-    return GuestFileBrowser(homeRoot = storePaths.home, workspaceRoot = storePaths.defaultWorkspace)
+    val distro = try {
+      store.readActiveRecord()?.distro
+    } catch (_: Exception) {
+      null
+    } ?: RootfsCatalog.DISTRO_ALPINE
+    return GuestFileBrowser(homeRoot = storePaths.homeFor(distro), workspaceRoot = storePaths.defaultWorkspace)
   }
 
   /** Parses the shared guest file request; null means invalid_request. */

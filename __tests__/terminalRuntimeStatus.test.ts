@@ -11,6 +11,7 @@ jest.mock('../src/native/NativeTerminalRuntime', () => {
 });
 
 import {
+  activateRootfs,
   isTerminalRuntimeStatusResponse,
   importRootfs,
   installRootfs,
@@ -294,6 +295,52 @@ describe('typed install/reset wrappers', () => {
       requestId: 'install-1',
       rootfsId: PINNED_ROOTFS_ID,
     });
+  });
+
+  it('installs another distribution beside the active one when asked', async () => {
+    const runtime = {
+      installRootfs: jest.fn().mockResolvedValue({
+        requestId: 'install-2',
+        status: 'success',
+        rootfsId: DEBIAN_ROOTFS.rootfsId,
+        archiveSha256: DEBIAN_ROOTFS.sha256,
+        archiveBytes: DEBIAN_ROOTFS.sizeBytes,
+        extractionFiles: 2677,
+        probeExitCode: 0,
+        probeMarkers: [...DEBIAN_ROOTFS.probeMarkers],
+        reusedCache: false,
+        durationMs: 14_513,
+      }),
+    };
+    await expect(installRootfs('install-2', runtime, {rootfsId: DEBIAN_ROOTFS.rootfsId, makeActive: false}))
+      .resolves.toMatchObject({kind: 'success', rootfsId: DEBIAN_ROOTFS.rootfsId});
+    expect(runtime.installRootfs).toHaveBeenCalledWith({
+      requestId: 'install-2',
+      rootfsId: DEBIAN_ROOTFS.rootfsId,
+      makeActive: false,
+    });
+    await expect(installRootfs('install-3', runtime, {rootfsId: 'debian-13-aarch64'}))
+      .resolves.toEqual({kind: 'error', requestId: 'install-3', errorCode: 'invalid_request'});
+  });
+
+  it('activates an installed rootfs and validates the answer', async () => {
+    const runtime = {
+      activateRootfs: jest.fn().mockResolvedValue({requestId: 'act-1', status: 'success', rootfsId: DEBIAN_ROOTFS.rootfsId}),
+    };
+    await expect(activateRootfs('act-1', DEBIAN_ROOTFS.rootfsId, runtime))
+      .resolves.toEqual({kind: 'success', requestId: 'act-1', rootfsId: DEBIAN_ROOTFS.rootfsId});
+    expect(runtime.activateRootfs).toHaveBeenCalledWith({requestId: 'act-1', rootfsId: DEBIAN_ROOTFS.rootfsId});
+
+    runtime.activateRootfs.mockResolvedValue({requestId: 'act-1', status: 'error', errorCode: 'not_installed'});
+    await expect(activateRootfs('act-1', DEBIAN_ROOTFS.rootfsId, runtime))
+      .resolves.toEqual({kind: 'error', requestId: 'act-1', errorCode: 'not_installed'});
+
+    // A success for a different rootfs than asked for is not trusted.
+    runtime.activateRootfs.mockResolvedValue({requestId: 'act-1', status: 'success', rootfsId: PINNED_ROOTFS_ID});
+    await expect(activateRootfs('act-1', DEBIAN_ROOTFS.rootfsId, runtime))
+      .resolves.toEqual({kind: 'error', requestId: 'act-1', errorCode: 'invalid_response'});
+    await expect(activateRootfs('act-1', 'debian-13-aarch64', runtime))
+      .resolves.toEqual({kind: 'error', requestId: 'act-1', errorCode: 'invalid_request'});
   });
 
   it('imports a picked archive through the same validation', async () => {

@@ -92,6 +92,8 @@ class DistroStoreCore(
     expectedBytes: Long = entry.sizeBytes,
     downloadTimeoutMs: Long = 120_000,
     source: ArchiveDownloader = downloader,
+    /** False installs the version beside the active one, e.g. a second user's distribution, without switching to it. */
+    makeActive: Boolean = true,
   ): InstallOutcome {
     if (!AlpineRootfsCatalog.isValidRootfsId(rootfsId)) {
       return InstallOutcome.Failure(rootfsId, "validate", "invalid_rootfs_id", "id does not match the catalog pattern")
@@ -173,7 +175,9 @@ class DistroStoreCore(
     // The markers to require come from the catalog entry, never from the
     // prober's result, so another distribution's probe output cannot pass.
     val probe = try {
-      prober.probe(stagingRootfs, paths.home, 60_000, entry).copy(requiredLines = entry.probeMarkers)
+      val probeHome = paths.homeFor(entry.distro)
+      if (!probeHome.isDirectory && !probeHome.mkdirs()) throw IOException("cannot create ${entry.distro} home")
+      prober.probe(stagingRootfs, probeHome, 60_000, entry).copy(requiredLines = entry.probeMarkers)
     } catch (error: Exception) {
       deleteQuietly(staging)
       return InstallOutcome.Failure(rootfsId, "probe", "probe_failed", error.message ?: "probe failure")
@@ -248,7 +252,7 @@ class DistroStoreCore(
       return InstallOutcome.Failure(rootfsId, "promote", "promote_failed", error.message ?: "cannot promote version")
     }
     try {
-      writeJsonAtomically(paths.activeRecord, record.toJson())
+      if (makeActive) writeJsonAtomically(paths.activeRecord, record.toJson())
     } catch (error: IOException) {
       deleteQuietly(versionDir)
       if (replacement.exists() && !replacement.renameTo(versionDir)) {
@@ -285,6 +289,33 @@ class DistroStoreCore(
         manifest.probeMarkers == record.probeMarkers
     }
   }
+
+  /**
+   * Makes an installed version active again without reinstalling it: the
+   * active record becomes a copy of that version's own manifest. Returns
+   * false when the version is missing or its manifest no longer matches the
+   * catalog.
+   */
+  @Synchronized
+  fun activate(rootfsId: String): Boolean {
+    if (!AlpineRootfsCatalog.isValidRootfsId(rootfsId)) return false
+    val rootfs = paths.versionRootfs(rootfsId)
+    if (!isOwnedDirectory(rootfs) || !rootfs.isDirectory) return false
+    val manifest = readRecordFile(paths.versionManifest(rootfsId)) ?: return false
+    if (manifest.rootfsId != rootfsId) return false
+    if (readActiveRecord()?.rootfsId == rootfsId) return true
+    return try {
+      writeJsonAtomically(paths.activeRecord, manifest.toJson())
+      true
+    } catch (_: IOException) {
+      false
+    }
+  }
+
+  /** The installed version of [distro], if any; at most one per distribution is kept. */
+  @Synchronized
+  fun installedVersionFor(distro: String): String? =
+    installedVersionIds().firstOrNull { RootfsCatalog.byId(it)?.distro == distro }
 
   @Synchronized
   fun installedVersionIds(): List<String> {
@@ -324,9 +355,10 @@ class DistroStoreCore(
     var removedHome = false
     var removedWorkspaces = false
     if (deleteHome) {
-      removedHome = paths.home.exists() || paths.harnessHomes.exists()
+      removedHome = paths.home.exists() || paths.harnessHomes.exists() || paths.distroHomes.exists()
       deleteTreeIfPresent(paths.home)
       deleteTreeIfPresent(paths.harnessHomes)
+      deleteTreeIfPresent(paths.distroHomes)
       if (!paths.home.mkdirs() && !paths.home.isDirectory) throw IOException("cannot recreate home")
       if (!paths.harnessHomes.mkdirs() && !paths.harnessHomes.isDirectory) {
         throw IOException("cannot recreate harness homes")

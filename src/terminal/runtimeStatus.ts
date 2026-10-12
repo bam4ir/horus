@@ -19,8 +19,10 @@ import type {
  */
 
 import {
+  buildActivateRootfsRequest,
   buildInstallRootfsRequest,
   buildResetRuntimeRequest,
+  isActivateRootfsResponse,
   isInstallRootfsResponse,
   isResetRuntimeResponse,
   isValidTerminalRuntimeErrorCode,
@@ -234,12 +236,21 @@ function operationError(
   return {kind: 'error', requestId, errorCode};
 }
 
-/** Installs the pinned rootfs and returns only a fully validated outcome. */
+/** Which catalog rootfs to install, and whether new sessions switch to it. */
+export type RootfsInstallOptions = Readonly<{
+  /** A catalog id; Alpine when absent. */
+  rootfsId?: string;
+  /** Defaults to true; false installs it beside the active rootfs. */
+  makeActive?: boolean;
+}>;
+
+/** Installs a pinned rootfs and returns only a fully validated outcome. */
 export async function installRootfs(
   requestId: string,
   runtime: Pick<Spec, 'installRootfs'> | null = nativeTerminalRuntime,
+  options: RootfsInstallOptions = {},
 ): Promise<TrustedInstallOutcome> {
-  return runRootfsInstall(requestId, runtime === null ? null : request => runtime.installRootfs(request));
+  return runRootfsInstall(requestId, options, runtime === null ? null : request => runtime.installRootfs(request));
 }
 
 /**
@@ -249,15 +260,49 @@ export async function installRootfs(
 export async function importRootfs(
   requestId: string,
   runtime: Pick<Spec, 'importRootfs'> | null = nativeTerminalRuntime,
+  options: RootfsInstallOptions = {},
 ): Promise<TrustedInstallOutcome> {
-  return runRootfsInstall(requestId, runtime === null ? null : request => runtime.importRootfs(request));
+  return runRootfsInstall(requestId, options, runtime === null ? null : request => runtime.importRootfs(request));
+}
+
+export type ActivateRootfsOutcome =
+  | Readonly<{kind: 'success'; requestId: string; rootfsId: string}>
+  | Readonly<{kind: 'error'; requestId: string; errorCode: TerminalRuntimeOperationErrorCode}>;
+
+/** Points new sessions at an installed rootfs, without reinstalling it. */
+export async function activateRootfs(
+  requestId: string,
+  rootfsId: string,
+  runtime: Pick<Spec, 'activateRootfs'> | null = nativeTerminalRuntime,
+): Promise<ActivateRootfsOutcome> {
+  const request = buildActivateRootfsRequest(requestId, rootfsId);
+  if (request === null) return operationError(requestId, 'invalid_request');
+  if (runtime === null) return operationError(requestId, 'unavailable');
+  let response: unknown;
+  try {
+    response = await runtime.activateRootfs(request);
+  } catch {
+    return operationError(requestId, 'internal_error');
+  }
+  if (!isActivateRootfsResponse(response) || response.requestId !== requestId) {
+    return operationError(requestId, 'invalid_response');
+  }
+  if (response.status === 'error') {
+    return isValidTerminalRuntimeErrorCode(response.errorCode)
+      ? operationError(requestId, response.errorCode)
+      : operationError(requestId, 'invalid_response');
+  }
+  return response.rootfsId === rootfsId
+    ? {kind: 'success', requestId, rootfsId}
+    : operationError(requestId, 'invalid_response');
 }
 
 async function runRootfsInstall(
   requestId: string,
+  options: RootfsInstallOptions,
   call: ((request: InstallRootfsRequest) => Promise<unknown>) | null,
 ): Promise<TrustedInstallOutcome> {
-  const request = buildInstallRootfsRequest(requestId);
+  const request = buildInstallRootfsRequest(requestId, options.rootfsId, options.makeActive);
   if (request === null) return operationError(requestId, 'invalid_request');
   if (call === null) return operationError(requestId, 'unavailable');
 
