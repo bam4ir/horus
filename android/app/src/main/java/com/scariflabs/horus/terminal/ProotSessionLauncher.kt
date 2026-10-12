@@ -782,10 +782,9 @@ class ProotSessionLauncher(
   private fun guestHomePathFor(username: String): String = "/home/$username"
 
   /**
-   * Give every interactive guest the same small zsh theme. Alpine's pinned
-   * minirootfs does not include zsh, so the profile is ready for the first
-   * `apk add zsh` and automatically hands future login shells to zsh once it
-   * exists. User content outside these bounded blocks is preserved.
+   * Give every interactive guest the same small zsh theme. Neither pinned
+   * rootfs includes zsh, so the profile is ready for the first install and
+   * automatically hands future login shells to zsh once it exists. User content outside these bounded blocks is preserved.
    */
   private fun prepareZshProfile(guestHomeDir: File) {
     val profile = File(guestHomeDir, PROFILE_NAME)
@@ -933,7 +932,7 @@ class ProotSessionLauncher(
       .any { it.isFile && it.canExecute() }
     val userBin = File(guestHomeDir, ".local/bin")
     if (!rootfsZsh) return false
-    if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL) return hasAlpineBaseUtilities(rootfsDir)
+    if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL) return hasBaseUtilities(rootfsDir)
     val readyMarker = File(guestHomeDir, ".cache/horus/$target.ready")
     if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_GITHUB) {
       val rootfsGh = listOf(File(rootfsDir, "bin/gh"), File(rootfsDir, "usr/bin/gh"))
@@ -984,7 +983,7 @@ class ProotSessionLauncher(
     return Files.isRegularFile(ps, java.nio.file.LinkOption.NOFOLLOW_LINKS)
   }
 
-  private fun hasAlpineBaseUtilities(rootfsDir: File): Boolean =
+  private fun hasBaseUtilities(rootfsDir: File): Boolean =
     listOf("rg", "curl", "jq", "python3").all { name ->
       File(rootfsDir, "usr/bin/$name").let { it.isFile && it.canExecute() }
     } && File(rootfsDir, "lib/ld-linux-aarch64.so.1").isFile
@@ -1090,30 +1089,30 @@ class ProotSessionLauncher(
     private val CODEX_AGENT_INSTRUCTIONS_BLOCK = """
       $CODEX_AGENT_INSTRUCTIONS_BEGIN
       ## Runtime environment
-      - Codex runs in Horus on Android inside an Alpine Linux ARM64 guest through PRoot.
-      - Use Alpine's `apk` package manager; do not assume `apt`, `systemd`, or a full GNU userland. Check available commands and options because many utilities may be BusyBox applets.
+      - Codex runs in Horus on Android inside a Linux ARM64 guest through PRoot. The distribution is Alpine or Debian; read `/etc/os-release` before assuming either.
+      - Alpine uses `apk`, musl, and BusyBox applets; Debian uses `apt` and glibc. Do not assume `systemd` or a running init, and check available commands and options before relying on them.
       - Codex runs as the dedicated non-root `harness_codex` user with its own persistent home; projects are available under `/workspace`.
-      - Horus provisions system dependencies as root before launching Codex. If a system package is missing, report it instead of assuming `apk add` will work from the session.
+      - Horus provisions system dependencies as root before launching Codex. If a system package is missing, report it instead of assuming `apk add` or `apt install` will work from the session.
       - Codex's Linux sandbox is unavailable under Android PRoot. Horus launches the CLI with `--sandbox danger-full-access`; do not assume Codex's own sandbox isolates commands from files accessible to this harness user.
       $CODEX_AGENT_INSTRUCTIONS_END
     """.trimIndent()
     private val CLAUDE_AGENT_INSTRUCTIONS_BLOCK = """
       $CLAUDE_AGENT_INSTRUCTIONS_BEGIN
       ## Runtime environment
-      - Claude Code runs in Horus on Android inside an Alpine Linux ARM64 guest through PRoot.
-      - Use Alpine's `apk` package manager; do not assume `apt`, `systemd`, or a full GNU userland. Check available commands and options because many utilities may be BusyBox applets.
+      - Claude Code runs in Horus on Android inside a Linux ARM64 guest through PRoot. The distribution is Alpine or Debian; read `/etc/os-release` before assuming either.
+      - Alpine uses `apk`, musl, and BusyBox applets; Debian uses `apt` and glibc. Do not assume `systemd` or a running init, and check available commands and options before relying on them.
       - Claude Code runs as the dedicated non-root `harness_claude` user with its own persistent home; projects are available under `/workspace`.
-      - Horus provisions system dependencies as root before launching Claude Code. If a system package is missing, report it instead of assuming `apk add` will work from the session.
+      - Horus provisions system dependencies as root before launching Claude Code. If a system package is missing, report it instead of assuming `apk add` or `apt install` will work from the session.
       - Commands run through Android PRoot. Do not assume Linux namespaces or kernel sandboxing isolate them from files accessible to the Horus app; PRoot's emulated user IDs are not a hard security boundary.
       $CLAUDE_AGENT_INSTRUCTIONS_END
     """.trimIndent()
     private val OPENCODE_AGENT_INSTRUCTIONS_BLOCK = """
       $OPENCODE_AGENT_INSTRUCTIONS_BEGIN
       ## Runtime environment
-      - OpenCode runs in Horus on Android inside an Alpine Linux ARM64 guest through PRoot.
-      - Use Alpine's `apk` package manager; do not assume `apt`, `systemd`, or a full GNU userland. Check available commands and options because many utilities may be BusyBox applets.
+      - OpenCode runs in Horus on Android inside a Linux ARM64 guest through PRoot. The distribution is Alpine or Debian; read `/etc/os-release` before assuming either.
+      - Alpine uses `apk`, musl, and BusyBox applets; Debian uses `apt` and glibc. Do not assume `systemd` or a running init, and check available commands and options before relying on them.
       - OpenCode runs as the dedicated non-root `harness_opencode` user with its own persistent home; projects are available under `/workspace`.
-      - Horus provisions system dependencies as root before launching OpenCode. If a system package is missing, report it instead of assuming `apk add` will work from the session.
+      - Horus provisions system dependencies as root before launching OpenCode. If a system package is missing, report it instead of assuming `apk add` or `apt install` will work from the session.
       - Commands run through Android PRoot. Do not assume Linux namespaces or kernel sandboxing isolate them from files accessible to the Horus app; PRoot's emulated user IDs are not a hard security boundary.
       $OPENCODE_AGENT_INSTRUCTIONS_END
     """.trimIndent()
@@ -1124,6 +1123,49 @@ class ProotSessionLauncher(
       if [ -n "${'$'}{HORUS_ALPINE_MIRROR:-}" ] && [ -w /etc/apk/repositories ]; then
         sed -i -E "s@^[^#]*/(v[0-9]+\.[0-9]+|edge)/([a-z]+)/?\${'$'}@${'$'}HORUS_ALPINE_MIRROR/\1/\2@" /etc/apk/repositories || true
       fi
+    """.trimIndent()
+    /**
+     * The guest's package manager and the packages each target needs from
+     * it: apk on Alpine, apt on Debian. Detected inside the guest, so the
+     * same script serves either rootfs. apt runs as root under PRoot, where
+     * it cannot drop to its _apt sandbox user, and refreshes its lists at
+     * most once a day.
+     */
+    internal val PACKAGE_MANAGER_SCRIPT = """
+      if [ -x /usr/bin/apt-get ]; then
+        horus_pkg=apt
+        pkgs_shell="ca-certificates curl git jq less openssh-client python3 ripgrep tzdata zsh"
+        pkgs_github="ca-certificates git openssh-client gh zsh"
+        pkgs_claude="bash curl ca-certificates git openssh-client zsh"
+        pkgs_node="bash ca-certificates git openssh-client nodejs npm zsh"
+        pkgs_procps="procps"
+        if [ ! -f /etc/apt/apt.conf.d/99horus ]; then
+          mkdir -p /etc/apt/apt.conf.d
+          printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Dpkg::Use-Pty "0";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
+        fi
+        export DEBIAN_FRONTEND=noninteractive
+      else
+        horus_pkg=apk
+        pkgs_shell="ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh"
+        pkgs_github="ca-certificates git openssh-client-default github-cli zsh"
+        pkgs_claude="bash curl ca-certificates git openssh-client-default zsh libgcc libstdc++"
+        pkgs_node="bash ca-certificates git openssh-client-default nodejs npm zsh libgcc libstdc++"
+        pkgs_procps="procps-ng"
+      fi
+      # pkg_install LOG PACKAGE... installs with the guest's package manager.
+      # Callers pass a package list unquoted, so each package is one argument.
+      pkg_install() {
+        pkg_log=${'$'}1
+        shift
+        if [ "${'$'}horus_pkg" = apt ]; then
+          if [ -z "${'$'}(find /var/lib/apt/lists -maxdepth 1 -name '*_Packages*' -mmin -1440 2>/dev/null | head -n 1)" ]; then
+            run_logged "${'$'}pkg_log" apt-get update || return
+          fi
+          run_logged "${'$'}pkg_log" apt-get install -y --no-install-recommends "${'$'}@"
+        else
+          run_logged "${'$'}pkg_log" apk add --no-cache --no-progress "${'$'}@"
+        fi
+      }
     """.trimIndent()
     private val TOOLCHAIN_PROVISION_SCRIPT = """
       set -eu
@@ -1137,6 +1179,7 @@ class ProotSessionLauncher(
       printf '%s\n' "HORUS_INSTALL_TARGET=${'$'}target"
       mkdir -p /root/.local/bin /root/.cache/horus
       $APK_MIRROR_SCRIPT
+      $PACKAGE_MANAGER_SCRIPT
       provision_stage=/root/.cache/horus/provision-stage
       mark_provision_stage() {
         printf '%s\n' "${'$'}1" > "${'$'}provision_stage"
@@ -1173,10 +1216,13 @@ class ProotSessionLauncher(
         claude_base=https://downloads.claude.ai/claude-code-releases
         claude_arch=${'$'}(uname -m)
         if [ "${'$'}claude_arch" = aarch64 ]; then claude_arch=arm64; fi
+        # install.sh fetches the musl build on Alpine and the glibc one elsewhere.
+        claude_libc=
+        if [ -e /lib/ld-musl-aarch64.so.1 ] || [ -e /lib/ld-musl-x86_64.so.1 ]; then claude_libc=-musl; fi
         claude_version=${'$'}(curl --connect-timeout 15 --max-time 30 -fsSL "${'$'}claude_base/latest" 2>/dev/null) || return 0
         curl --connect-timeout 15 --max-time 30 -fsSL "${'$'}claude_base/${'$'}claude_version/manifest.json" 2>/dev/null |
           tr -d ' \n' |
-          sed -n "s/.*\"linux-${'$'}claude_arch-musl\":{[^{}]*\"size\":\([0-9]*\).*/\1/p" |
+          sed -n "s/.*\"linux-${'$'}claude_arch${'$'}claude_libc\":{[^{}]*\"size\":\([0-9]*\).*/\1/p" |
           awk '${'$'}1 > 0 { printf "%d\n", (${'$'}1 + 1023) / 1024 }' || true
       }
       # Compressed size of every tarball `npm install <package>` downloads:
@@ -1260,7 +1306,7 @@ class ProotSessionLauncher(
           [ ! -x /usr/bin/python3 ] || [ ! -e /lib/ld-linux-aarch64.so.1 ] ||
           [ ! -x /usr/bin/less ] || [ ! -e /usr/share/zoneinfo/UTC ]; then
           mark_provision_stage apk
-          if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh; then
+          if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_shell; then
             # PRoot cannot create zsh's versioned hardlink (bin/zsh-5.9) on
             # this Android filesystem. Continue only when both the shell and
             # base utilities extracted successfully for visible clone sessions.
@@ -1276,7 +1322,7 @@ class ProotSessionLauncher(
       elif [ "${'$'}target" = github ]; then
         if ! command -v zsh >/dev/null 2>&1 || ! command -v gh >/dev/null 2>&1 || [ ! -f /root/.cache/horus/github.ready ]; then
           mark_provision_stage github
-          if ! run_logged /root/.cache/horus/github-install.log apk add --no-cache --no-progress ca-certificates git openssh-client-default github-cli zsh; then
+          if ! pkg_install /root/.cache/horus/github-install.log ${'$'}pkgs_github; then
             if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v gh >/dev/null 2>&1 || ! gh --version >/dev/null 2>&1; then
               mark_provision_stage github_failed
               exit 26
@@ -1286,7 +1332,7 @@ class ProotSessionLauncher(
       elif [ "${'$'}target" = claude ]; then
         if ! command -v zsh >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || [ ! -f /root/.cache/horus/claude.ready ]; then
           mark_provision_stage apk
-          if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress bash curl ca-certificates git openssh-client-default zsh libgcc libstdc++; then
+          if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_claude; then
             if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
               mark_provision_stage apk_failed
               exit 21
@@ -1295,7 +1341,7 @@ class ProotSessionLauncher(
         fi
       elif ! command -v zsh >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
         mark_provision_stage apk
-        if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress bash ca-certificates git openssh-client-default nodejs npm zsh libgcc libstdc++; then
+        if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_node; then
           if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
             mark_provision_stage apk_failed
             exit 21
@@ -1306,7 +1352,7 @@ class ProotSessionLauncher(
       # `ps -p PID -o lstart=`, which BusyBox ps does not support.
       if [ "${'$'}target" = codex ] && ! ps -p "${'$'}${'$'}" -o lstart= >/dev/null 2>&1; then
         mark_provision_stage apk
-        if ! run_logged /root/.cache/horus/alpine-bootstrap.log apk add --no-cache --no-progress procps-ng; then
+        if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_procps; then
           mark_provision_stage apk_failed
           exit 21
         fi
@@ -1517,7 +1563,7 @@ EOF
         chgrp "${'$'}session_gid" /workspace
         chmod 2770 /workspace
       fi
-      exec /bin/busybox su -p -c '
+      user_script='
         cd "${'$'}HORUS_SESSION_PWD"
         umask 0002
         export HOME="/home/${'$'}HORUS_GUEST_USERNAME"
@@ -1526,13 +1572,20 @@ EOF
         export XDG_CONFIG_HOME="${'$'}HOME/.config"
         export XDG_DATA_HOME="${'$'}HOME/.local/share"
         export XDG_CACHE_HOME="${'$'}HOME/.cache"
+        export USER="${'$'}HORUS_GUEST_USERNAME" LOGNAME="${'$'}HORUS_GUEST_USERNAME"
         if [ "${'$'}{HORUS_TOOLCHAIN_TARGET:-}" = codex ]; then
           export NPM_CONFIG_PREFIX="${'$'}HOME/.local"
           export npm_config_prefix="${'$'}HOME/.local"
         fi
         unset HORUS_BOOTSTRAP
         exec /bin/sh -c "${'$'}HORUS_SESSION_COMMAND"
-      ' "${'$'}session_username"
+      '
+      if [ -x /bin/busybox ]; then
+        exec /bin/busybox su -p -c "${'$'}user_script" "${'$'}session_username"
+      fi
+      # Debian has no BusyBox; util-linux setpriv changes ids without PAM,
+      # which PRoot's emulated root cannot satisfy.
+      exec setpriv --reuid="${'$'}session_uid" --regid="${'$'}session_gid" --clear-groups -- /bin/sh -c "${'$'}user_script"
     """.trimIndent()
     private val REMOTE_ACCESS_SCRIPT = """
       set -eu
@@ -1545,15 +1598,31 @@ EOF
       export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       stage() { printf 'HORUS_REMOTE_STAGE=%s\n' "${'$'}1"; }
       mkdir -p /root/.cache/horus
-      if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ] || [ ! -x /usr/lib/ssh/sftp-server ] ||
+      if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ] ||
+        { [ ! -x /usr/lib/ssh/sftp-server ] && [ ! -x /usr/lib/openssh/sftp-server ]; } ||
         [ ! -x /usr/bin/scp ] || [ ! -x /usr/bin/rsync ] || ! command -v zsh >/dev/null 2>&1; then
         stage installing
-        if ! apk add --no-cache --no-progress dropbear openssh-client-default openssh-sftp-server rsync zsh; then
+        if [ -x /usr/bin/apt-get ]; then
+          mkdir -p /etc/apt/apt.conf.d
+          [ -f /etc/apt/apt.conf.d/99horus ] ||
+            printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Dpkg::Use-Pty "0";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
+          remote_install() {
+            DEBIAN_FRONTEND=noninteractive apt-get update &&
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dropbear-bin openssh-client openssh-sftp-server rsync zsh
+          }
+        else
+          remote_install() { apk add --no-cache --no-progress dropbear openssh-client-default openssh-sftp-server rsync zsh; }
+        fi
+        if ! remote_install; then
           if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ]; then
             stage install_failed
             exit 30
           fi
         fi
+      fi
+      if [ ! -e /usr/lib/ssh/sftp-server ] && [ -x /usr/lib/openssh/sftp-server ]; then
+        mkdir -p /usr/lib/ssh
+        ln -s /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server
       fi
       keydir="${'$'}home/.config/horus"
       hostkey="${'$'}keydir/ssh_host_ed25519_key"
@@ -1613,13 +1682,19 @@ EOF
         opencode) name="OpenCode" ;;
         *) printf 'horus: unknown agent %s\n' "${'$'}tool" >&2; exit 2 ;;
       esac
+      # On Debian the user cannot run apt; Horus's app tiles install the
+      # system packages as root, and these need only what is already there.
+      system_packages() {
+        if command -v apk >/dev/null 2>&1; then apk add --no-cache --no-progress "${'$'}@"; else true; fi
+      }
       install_claude() {
-        apk add --no-cache --no-progress bash curl ca-certificates git libgcc libstdc++ &&
+        system_packages bash curl ca-certificates git libgcc libstdc++ &&
           curl --connect-timeout 15 --max-time 300 -fsSL https://claude.ai/install.sh -o "${'$'}cache/claude-install.sh" &&
           bash "${'$'}cache/claude-install.sh"
       }
       install_npm_agent() {
-        apk add --no-cache --no-progress bash ca-certificates git nodejs npm libgcc libstdc++ &&
+        system_packages bash ca-certificates git nodejs npm libgcc libstdc++ &&
+          command -v npm >/dev/null 2>&1 &&
           npm install --global --force --prefix "${'$'}HOME/.local" --no-package-lock --no-audit --no-fund --no-progress --loglevel=error "${'$'}1"
       }
       # npm's bin links lose their execute bit under PRoot; launch the entry
@@ -1635,7 +1710,7 @@ EOF
       }
       install_opencode() {
         install_npm_agent opencode-ai || return 1
-        # On Alpine the package picks a native binary named opencode.exe.
+        # The package may pick a native binary named opencode.exe (it does on Alpine).
         entry="${'$'}HOME/.local/lib/node_modules/opencode-ai/bin/opencode"
         [ -f "${'$'}entry" ] || entry="${'$'}entry.exe"
         test -f "${'$'}entry" && chmod u+rx "${'$'}entry" && write_launcher '' "${'$'}entry"
@@ -1693,7 +1768,11 @@ EOF
       # dropbear re-execs itself per connection with fexecve(), which PRoot
       # cannot follow. It skips that when it cannot open argv[0], so start it
       # by bare name from / and let each connection run in the forked child.
-      exec /bin/busybox su -s /bin/sh -c 'cd / && PATH=/usr/sbin:/usr/bin:/sbin:/bin exec dropbear -F -E -s -w -K 30 -p "127.0.0.1:${'$'}HORUS_REMOTE_PORT" -r "${'$'}HORUS_REMOTE_HOSTKEY" -P "${'$'}HOME/.cache/horus/dropbear.pid"' "${'$'}user"
+      dropbear_script='cd / && PATH=/usr/sbin:/usr/bin:/sbin:/bin exec dropbear -F -E -s -w -K 30 -p "127.0.0.1:${'$'}HORUS_REMOTE_PORT" -r "${'$'}HORUS_REMOTE_HOSTKEY" -P "${'$'}HOME/.cache/horus/dropbear.pid"'
+      if [ -x /bin/busybox ]; then
+        exec /bin/busybox su -s /bin/sh -c "${'$'}dropbear_script" "${'$'}user"
+      fi
+      exec setpriv --reuid="${'$'}uid" --regid="${'$'}gid" --clear-groups -- env HOME="${'$'}home" USER="${'$'}user" LOGNAME="${'$'}user" SHELL=/bin/sh /bin/sh -c "${'$'}dropbear_script"
     """.trimIndent()
     private const val RESOLV_CONF_DIRECTORY = "etc"
     private const val RESOLV_CONF_NAME = "resolv.conf"

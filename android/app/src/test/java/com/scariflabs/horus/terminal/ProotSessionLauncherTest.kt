@@ -450,8 +450,8 @@ class ProotSessionLauncherTest {
 
       assertTrue(first.contains("# My Codex defaults"))
       assertTrue(first.contains("Keep my project instructions."))
-      assertTrue(first.contains("Alpine Linux ARM64 guest through PRoot"))
-      assertTrue(first.contains("`apk` package manager"))
+      assertTrue(first.contains("Linux ARM64 guest through PRoot. The distribution is Alpine or Debian"))
+      assertTrue(first.contains("Alpine uses `apk`") && first.contains("Debian uses `apt`"))
       assertTrue(first.contains("`harness_codex` user"))
       assertTrue(first.contains("`--sandbox danger-full-access`"))
       assertTrue(first.indexOf("# My Codex defaults") < first.indexOf(ProotSessionLauncher.CODEX_AGENT_INSTRUCTIONS_BEGIN))
@@ -577,8 +577,8 @@ class ProotSessionLauncherTest {
 
         assertTrue(first.contains("# My ${harness.homeName} defaults"))
         assertTrue(first.contains("Keep my existing guidance."))
-        assertTrue(first.contains("Alpine Linux ARM64 guest through PRoot"))
-        assertTrue(first.contains("`apk` package manager"))
+        assertTrue(first.contains("Linux ARM64 guest through PRoot. The distribution is Alpine or Debian"))
+        assertTrue(first.contains("Alpine uses `apk`") && first.contains("Debian uses `apt`"))
         assertTrue(first.contains(harness.userName))
         assertTrue(first.contains("not a hard security boundary"))
         assertTrue(first.indexOf("# My ${harness.homeName} defaults") < first.indexOf(harness.beginMarker))
@@ -661,17 +661,67 @@ class ProotSessionLauncherTest {
         TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL,
       )
 
-      assertTrue(
-        launch.argv.last().contains(
-          "apk add --no-cache --no-progress ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh",
-        ),
-      )
+      val script = launch.argv.last()
+      // One script for both distributions: the guest picks apk or apt.
+      assertTrue(script.contains("pkg_install /root/.cache/horus/alpine-bootstrap.log \$pkgs_shell"))
+      assertTrue(script.contains("pkgs_shell=\"ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh\""))
+      assertTrue(script.contains("apk add --no-cache --no-progress"))
+      assertTrue(script.contains("pkgs_shell=\"ca-certificates curl git jq less openssh-client python3 ripgrep tzdata zsh\""))
+      assertTrue(script.contains("apt-get install -y --no-install-recommends"))
+      assertTrue(script.contains("APT::Sandbox::User \"root\";"))
       assertTrue(launch.argv.last().contains("command -v git"))
       assertTrue(launch.argv.last().contains("git --version"))
       for (utility in listOf("rg", "curl", "jq", "python3")) {
         assertTrue(launch.argv.last().contains("/usr/bin/$utility"))
       }
       assertTrue(launch.argv.last().contains("/lib/ld-linux-aarch64.so.1"))
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun everyGeneratedGuestScriptIsValidShell() {
+    val base = Files.createTempDirectory("horus-script-syntax").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("live stat\n")
+      File(hostProc, "loadavg").writeText("0.01 0.02 0.03 1/2 3\n")
+      // Remote access binds /dev/ptmx and /dev/pts, which the JVM test host may lack.
+      val hostDev = File(base, "dev").apply { mkdirs() }
+      listOf("null", "zero", "random", "urandom", "tty", "ptmx").forEach { File(hostDev, it).writeText("") }
+      File(hostDev, "pts").mkdirs()
+      val launcher = ProotSessionLauncher(
+        runtime = ProotRuntimeLocator.LocatedRuntime(
+          prootBin = File(base, "libproot.so"),
+          loaderBin = File(base, "libproot_loader.so"),
+          libraryDir = base,
+          prootVersion = "5.4.0",
+        ),
+        scratchDir = File(base, "scratch"),
+        hostProcDir = hostProc,
+        hostDevDir = hostDev,
+      )
+      val launches = TerminalRuntimeContract.let { contract ->
+        listOf(
+          contract.TOOLCHAIN_TARGET_SHELL, contract.TOOLCHAIN_TARGET_GITHUB, contract.TOOLCHAIN_TARGET_CLAUDE,
+          contract.TOOLCHAIN_TARGET_CODEX, contract.TOOLCHAIN_TARGET_OPENCODE,
+        ).flatMap { target ->
+          listOf(
+            launcher.toolchainProvisionLaunchSpec(rootfs, home, target),
+            launcher.toolchainSessionLaunchSpec(rootfs, home, guestUsername = "vishesh", target = target),
+          )
+        }
+      } + launcher.remoteAccessLaunchSpec(rootfs, home, workspaceDir = null, guestUsername = "vishesh")
+      for (launch in launches) {
+        val script = launch.argv.first { it.contains("set -eu") }
+        val process = ProcessBuilder("/bin/sh", "-n", "-c", script).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        assertEquals(output, 0, process.waitFor())
+      }
     } finally {
       base.deleteRecursively()
     }
