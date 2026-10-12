@@ -200,8 +200,8 @@ class RemoteAccessTest {
       assertTrue(script.contains("busybox su -s /bin/sh -c"))
       // SSH runs the app's own harness installs, in their homes.
       assertTrue(binds.contains("${codexHome.canonicalPath}:/home/harness_codex"))
-      assertTrue(launch.environment.contains("HORUS_AGENT_HOMES=codex=/home/harness_codex"))
-      assertTrue(script.contains("/usr/local/lib/horus/agent-homes"))
+      assertEquals("codex=/home/harness_codex\n", File(rootfs, ProotSessionLauncher.GUEST_AGENT_HOMES_PATH.trimStart('/')).readText())
+      assertTrue(script.contains(ProotSessionLauncher.GUEST_AGENT_HOMES_PATH))
       assertTrue(script.contains("exec \"${'$'}app_home/.local/bin/${'$'}tool\""))
       // Debian's zsh is pointed at the zshrc.d snippets (the Claude wrapper).
       assertTrue(script.contains("/etc/zsh/zshrc.d/*.zsh(N)"))

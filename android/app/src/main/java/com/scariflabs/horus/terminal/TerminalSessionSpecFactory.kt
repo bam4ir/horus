@@ -120,6 +120,8 @@ class TerminalSessionSpecFactory(
           target = toolchainTarget,
           provision = !toolchainReady,
           rootHelper = harnessUser == null,
+          // The user's own terminal runs the app's harnesses, like SSH does.
+          harnessHomes = if (harnessUser == null) existingHarnessHomes(profileUsername) else emptyList(),
         )
       }
       BuildOutcome.Success(
@@ -225,12 +227,7 @@ class TerminalSessionSpecFactory(
       // The active user's home may postdate the pairing; give it the paired keys.
       RemoteAccess.Store(paths.base).syncKeysToHomes()
       // The app's harnesses, so SSH runs the same installs and logins.
-      val distro = activeDistro()
-      val harnessHomes = AGENT_TARGETS.mapNotNull { target ->
-        val user = TerminalHarnessUsers.forTarget(target, profileUsername) ?: return@mapNotNull null
-        val home = paths.harnessHomeFor(distro, user.homeKey)
-        if (home.isDirectory) ProotSessionLauncher.HarnessHome(target, user.username, home) else null
-      }
+      val harnessHomes = existingHarnessHomes(profileUsername)
       RemoteAccessBuildOutcome.Success(
         launcher.remoteAccessLaunchSpec(
           rootfsDir = rootfsDir,
@@ -260,6 +257,16 @@ class TerminalSessionSpecFactory(
   fun activeProfileUsername(): String? = TerminalGuestIdentity.readStoredUsername(context, activeDistro())
 
   /** The active distribution's home for [harnessUser], or its user home; created on first use. */
+  /** The harness homes the app has made in the active distribution so far. */
+  private fun existingHarnessHomes(profileUsername: String): List<ProotSessionLauncher.HarnessHome> {
+    val distro = activeDistro()
+    return AGENT_TARGETS.mapNotNull { target ->
+      val user = TerminalHarnessUsers.forTarget(target, profileUsername) ?: return@mapNotNull null
+      val home = paths.harnessHomeFor(distro, user.homeKey)
+      if (home.isDirectory) ProotSessionLauncher.HarnessHome(target, user.username, home) else null
+    }
+  }
+
   private fun activeGuestHome(harnessUser: TerminalHarnessUser?): File {
     val distro = activeDistro()
     val home = harnessUser?.let { paths.harnessHomeFor(distro, it.homeKey) } ?: paths.homeFor(distro)

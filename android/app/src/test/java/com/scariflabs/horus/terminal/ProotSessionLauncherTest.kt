@@ -1333,9 +1333,14 @@ class ProotSessionLauncherTest {
       assertFalse(harness.argv.contains("${File(hostDev, "pts").absolutePath}:/dev/pts"))
       assertFalse(sudo.exists())
 
+      val claudeHome = File(base, "harness-homes/claude").apply { mkdirs() }
       val own = launcher.toolchainSessionLaunchSpec(
         rootfs, home, guestUsername = "nefer", target = TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL, rootHelper = true, provision = false,
+        harnessHomes = listOf(ProotSessionLauncher.HarnessHome(TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE, "harness_claude", claudeHome)),
       )
+      // The user's own terminal runs the app's harnesses, as SSH does.
+      assertTrue(own.argv.windowed(2).any { it == listOf("-b", "${claudeHome.canonicalPath}:/home/harness_claude") })
+      assertEquals("claude=/home/harness_claude\n", File(rootfs, ProotSessionLauncher.GUEST_AGENT_HOMES_PATH.trimStart('/')).readText())
       assertTrue(own.environment.contains("HORUS_ROOT_HELPER=1"))
       assertTrue(own.environment.contains("HORUS_SKIP_TOOLCHAIN_PROVISION=1"))
       val binds = own.argv.windowed(2).filter { it[0] == "-b" }.map { it[1] }

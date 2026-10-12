@@ -127,6 +127,8 @@ class ProotSessionLauncher(
      * user. Only the profile user's own sessions get it, never a harness's.
      */
     rootHelper: Boolean = false,
+    /** The app's harness homes, mounted for the profile user's own sessions. */
+    harnessHomes: List<HarnessHome> = emptyList(),
   ): LaunchSpec {
     require(TerminalRuntimeContract.isValidToolchainTarget(target)) { "toolchain target is invalid" }
     val command = sessionCommand ?: "exec zsh -l"
@@ -140,6 +142,8 @@ class ProotSessionLauncher(
     }
     val sessionWorkingDirectory = if (workspaceDir == null) guestHomePath else "/workspace"
     if (rootHelper) installRootHelper(rootfsDir)
+    requireHarnessHomes(harnessHomes, guestUsername)
+    if (harnessHomes.isNotEmpty()) installAgentHomes(rootfsDir, harnessHomes)
     val launch = buildLaunchSpec(
       rootfsDir = rootfsDir,
       guestHomeDir = guestHomeDir,
@@ -163,6 +167,7 @@ class ProotSessionLauncher(
       forceRootIdentity = true,
       // sudo runs commands on their own pseudo-terminal, as SSH logins do.
       extraDeviceBinds = if (rootHelper) ptyDeviceBinds() else emptyList(),
+      extraBinds = harnessHomes.map { it.hostDir to "/home/${it.username}" },
     )
     val environment = buildList {
       addAll(launch.environment)
@@ -190,13 +195,10 @@ class ProotSessionLauncher(
   ): LaunchSpec {
     require(guestUsername != GUEST_ROOT_USER) { "remote access needs a non-root profile user" }
     require(port in 1025..65535) { "remote access port is invalid" }
-    harnessHomes.forEach { home ->
-      require(home.target in AGENT_STUB_TARGETS && USERNAME_PATTERN.matches(home.username) && home.username != guestUsername) {
-        "harness home is invalid"
-      }
-    }
+    requireHarnessHomes(harnessHomes, guestUsername)
     installRootHelper(rootfsDir)
-    val launch = buildLaunchSpec(
+    installAgentHomes(rootfsDir, harnessHomes)
+    return buildLaunchSpec(
       rootfsDir = rootfsDir,
       guestHomeDir = guestHomeDir,
       workspaceDir = workspaceDir,
@@ -224,9 +226,6 @@ class ProotSessionLauncher(
       // and friends over SSH run the app's installs with its logins.
       extraBinds = harnessHomes.map { it.hostDir to "/home/${it.username}" },
     )
-    if (harnessHomes.isEmpty()) return launch
-    val agentHomes = harnessHomes.joinToString(" ") { "${it.target}=/home/${it.username}" }
-    return launch.copy(environment = launch.environment + "HORUS_AGENT_HOMES=$agentHomes")
   }
 
   private fun buildLaunchSpec(
@@ -401,45 +400,69 @@ class ProotSessionLauncher(
   private fun ptyDeviceBinds(): List<Pair<File, String>> =
     listOf(File(hostDevDir, "ptmx") to "$GUEST_DEV/ptmx", File(hostDevDir, "pts") to "$GUEST_DEV/pts")
 
-  /**
-   * Writes `sudo` and its root helper into the rootfs. The guest owns the
-   * rootfs, so a directory on the way may be a symlink planted there; never
-   * write through one, or the app could overwrite its own files.
-   */
+  /** Writes `sudo` and its root helper into the rootfs. */
   private fun installRootHelper(rootfsDir: File) {
     ROOT_HELPER_FILES.forEach { (resource, guestPath) ->
       val content = requireNotNull(ProotSessionLauncher::class.java.getResourceAsStream("/com/scariflabs/horus/terminal/guest/$resource")) {
         "missing guest resource $resource"
       }.use { it.readBytes() }
-      var directory = rootfsDir
-      guestPath.trim('/').split('/').dropLast(1).forEach { part ->
-        directory = File(directory, part)
-        if (Files.isSymbolicLink(directory.toPath())) {
-          throw IllegalStateException("guest path /$guestPath goes through a symlink")
-        }
-        if (!directory.isDirectory && !directory.mkdir() && !directory.isDirectory) {
-          throw IllegalStateException("cannot create guest directory for /$guestPath")
-        }
+      writeGuestFile(rootfsDir, guestPath, content, executable = true)
+    }
+  }
+
+  /**
+   * Lists where the app's harness homes are mounted, for the `codex`,
+   * `claude`, and `opencode` commands outside the app's own harness sessions.
+   */
+  private fun installAgentHomes(rootfsDir: File, harnessHomes: List<HarnessHome>) {
+    val content = harnessHomes.joinToString("") { "${it.target}=/home/${it.username}\n" }
+    writeGuestFile(rootfsDir, GUEST_AGENT_HOMES_PATH, content.toByteArray(), executable = false)
+  }
+
+  private fun requireHarnessHomes(harnessHomes: List<HarnessHome>, guestUsername: String) {
+    harnessHomes.forEach { home ->
+      require(home.target in AGENT_STUB_TARGETS && USERNAME_PATTERN.matches(home.username) && home.username != guestUsername) {
+        "harness home is invalid"
       }
-      val target = File(rootfsDir, guestPath.trim('/'))
-      if (!Files.isSymbolicLink(target.toPath()) && target.isFile && target.canExecute() && target.readBytes().contentEquals(content)) {
-        return@forEach
+    }
+  }
+
+  /**
+   * Writes one file into the rootfs. The guest owns the rootfs, so a
+   * directory on the way may be a symlink planted there; never write through
+   * one, or the app could overwrite its own files.
+   */
+  private fun writeGuestFile(rootfsDir: File, guestPath: String, content: ByteArray, executable: Boolean) {
+    var directory = rootfsDir
+    guestPath.trim('/').split('/').dropLast(1).forEach { part ->
+      directory = File(directory, part)
+      if (Files.isSymbolicLink(directory.toPath())) {
+        throw IllegalStateException("guest path $guestPath goes through a symlink")
       }
-      var temporary: File? = null
-      try {
-        temporary = File.createTempFile("${target.name}-", ".tmp", directory)
-        temporary.writeBytes(content)
-        temporary.setReadable(true, false)
-        temporary.setExecutable(true, false)
-        Files.move(
-          temporary.toPath(),
-          target.toPath(),
-          StandardCopyOption.ATOMIC_MOVE,
-          StandardCopyOption.REPLACE_EXISTING,
-        )
-      } finally {
-        temporary?.takeIf { it.exists() }?.delete()
+      if (!directory.isDirectory && !directory.mkdir() && !directory.isDirectory) {
+        throw IllegalStateException("cannot create guest directory for $guestPath")
       }
+    }
+    val target = File(rootfsDir, guestPath.trim('/'))
+    if (!Files.isSymbolicLink(target.toPath()) && target.isFile && (!executable || target.canExecute()) &&
+      target.readBytes().contentEquals(content)
+    ) {
+      return
+    }
+    var temporary: File? = null
+    try {
+      temporary = File.createTempFile("${target.name}-", ".tmp", directory)
+      temporary.writeBytes(content)
+      temporary.setReadable(true, false)
+      if (executable) temporary.setExecutable(true, false)
+      Files.move(
+        temporary.toPath(),
+        target.toPath(),
+        StandardCopyOption.ATOMIC_MOVE,
+        StandardCopyOption.REPLACE_EXISTING,
+      )
+    } finally {
+      temporary?.takeIf { it.exists() }?.delete()
     }
   }
 
@@ -1087,6 +1110,7 @@ class ProotSessionLauncher(
     const val GUEST_LANG = "C.UTF-8"
     const val GUEST_SUDO_PATH = "/usr/local/bin/sudo"
     const val GUEST_ROOT_HELPER_PATH = "/usr/local/lib/horus/sudo-helper"
+    const val GUEST_AGENT_HOMES_PATH = "/usr/local/lib/horus/agent-homes"
     private val AGENT_STUB_TARGETS = setOf(
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
@@ -1829,7 +1853,7 @@ EOF
       esac
       # Prefer the app's own install, run in its harness home, so SSH shares
       # the app's login, settings, and trusted folders.
-      app_home=${'$'}(sed -n "s#^${'$'}tool=##p" /usr/local/lib/horus/agent-homes 2>/dev/null)
+      app_home=${'$'}(sed -n "s#^${'$'}tool=##p" $GUEST_AGENT_HOMES_PATH 2>/dev/null)
       if [ -n "${'$'}app_home" ] && [ -x "${'$'}app_home/.local/bin/${'$'}tool" ]; then
         export HOME="${'$'}app_home" XDG_CONFIG_HOME="${'$'}app_home/.config" XDG_DATA_HOME="${'$'}app_home/.local/share" XDG_CACHE_HOME="${'$'}app_home/.cache"
         export PATH="${'$'}app_home/.local/bin:${'$'}PATH"
@@ -1888,8 +1912,6 @@ EOF
       HORUS_INSTALLER
       chmod 755 "${'$'}agent_installer.tmp"
       mv -f "${'$'}agent_installer.tmp" "${'$'}agent_installer"
-      # SSH logins do not inherit this environment; leave the homes in a file.
-      printf '%s\n' ${'$'}{HORUS_AGENT_HOMES:-} > /usr/local/lib/horus/agent-homes
       for agent in claude codex opencode; do
         stub="/usr/local/bin/${'$'}agent"
         # Never replace a real install someone put here (npm -g does).
