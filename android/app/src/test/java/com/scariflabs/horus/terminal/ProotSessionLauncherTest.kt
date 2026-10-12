@@ -666,8 +666,9 @@ class ProotSessionLauncherTest {
       assertTrue(script.contains("pkg_install /root/.cache/horus/alpine-bootstrap.log \$pkgs_shell"))
       assertTrue(script.contains("pkgs_shell=\"ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh\""))
       assertTrue(script.contains("apk add --no-cache --no-progress"))
+      assertTrue(script.contains("force-unsafe-io"))
       assertTrue(script.contains("pkgs_shell=\"ca-certificates curl git jq less openssh-client python3 ripgrep tzdata zsh\""))
-      assertTrue(script.contains("apt-get install -y --no-install-recommends"))
+      assertTrue(script.contains("apt_with_status install -y --no-install-recommends"))
       assertTrue(script.contains("APT::Sandbox::User \"root\";"))
       assertTrue(launch.argv.last().contains("command -v git"))
       assertTrue(launch.argv.last().contains("git --version"))
@@ -675,6 +676,46 @@ class ProotSessionLauncherTest {
         assertTrue(launch.argv.last().contains("/usr/bin/$utility"))
       }
       assertTrue(launch.argv.last().contains("/lib/ld-linux-aarch64.so.1"))
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun packageProgressTurnsAptAndApkStatusIntoPercentLines() {
+    val base = Files.createTempDirectory("horus-pkg-progress").toFile()
+    try {
+      val status = File(base, "status")
+      val progress = File(base, "progress")
+      val log = File(base, "log")
+      fun watch(manager: String, vararg lines: String): List<String> {
+        status.writeText("")
+        log.writeText("")
+        val target = if (manager == "apt") "\$pkg_status" else "\$pkg_log"
+        val script = ProotSessionLauncher.PACKAGE_MANAGER_SCRIPT +
+          "\nhorus_pkg=$manager; pkg_status='${status.path}'; pkg_progress='${progress.path}'; pkg_log='${log.path}'\n" +
+          "watch_packages & pid=\$!\n" +
+          lines.joinToString("") { "printf '%s\\n' '$it' >> \"$target\"; sleep 1.3\n" } +
+          "kill \$pid\n"
+        val process = ProcessBuilder("/bin/sh", "-c", script).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        process.waitFor()
+        return output.lines().filter { it.isNotBlank() }
+      }
+
+      // apt: download status, then dpkg status whose package may carry an arch.
+      assertEquals(
+        listOf("Downloading packages… 37%", "Installing packages… 64%"),
+        watch("apt", "dlstatus:12:37.5000:Retrieving file 12 of 40", "pmstatus:libc6:arm64:64.2000:Unpacking libc6 (arm64)"),
+      )
+      assertEquals("Installing packages… 64%", progress.readText().trim())
+      // apk: its own "(n/total)" lines in the install log.
+      assertEquals(
+        listOf("Installing packages… 25%"),
+        watch("apk", "fetch https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/APKINDEX.tar.gz", "(12/48) Installing libcurl (8.22.0-r0)"),
+      )
+      // Anything else is ignored.
+      assertEquals(emptyList<String>(), watch("apt", "pmerror:foo:1:bad", "noise"))
     } finally {
       base.deleteRecursively()
     }

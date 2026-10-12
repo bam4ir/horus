@@ -12,6 +12,7 @@ jest.mock('../src/native/NativeTerminalRuntime', () => {
 
 import {
   activateRootfs,
+  readProvisionProgress,
   isTerminalRuntimeStatusResponse,
   importRootfs,
   installRootfs,
@@ -321,6 +322,16 @@ describe('typed install/reset wrappers', () => {
     });
     await expect(installRootfs('install-3', runtime, {rootfsId: 'debian-13-aarch64'}))
       .resolves.toEqual({kind: 'error', requestId: 'install-3', errorCode: 'invalid_request'});
+  });
+
+  it('passes on only well-formed package progress lines', async () => {
+    const reply = (line: unknown) => ({readProvisionProgress: jest.fn().mockResolvedValue({status: 'success', line})});
+    await expect(readProvisionProgress(reply('Downloading packages… 37%'))).resolves.toBe('Downloading packages… 37%');
+    await expect(readProvisionProgress(reply('Installing packages… 100%'))).resolves.toBe('Installing packages… 100%');
+    await expect(readProvisionProgress(reply(undefined))).resolves.toBeUndefined();
+    await expect(readProvisionProgress(reply('rm -rf / … 5%'))).resolves.toBeUndefined();
+    await expect(readProvisionProgress(reply('Installing packages… 1000%'))).resolves.toBeUndefined();
+    await expect(readProvisionProgress({readProvisionProgress: jest.fn().mockRejectedValue(new Error('gone'))})).resolves.toBeUndefined();
   });
 
   it('activates an installed rootfs and validates the answer', async () => {

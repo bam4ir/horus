@@ -200,6 +200,29 @@ describe('OnboardingScreen', () => {
     await ReactTestRenderer.act(async () => { renderer.unmount(); });
   });
 
+  test('shows the package manager progress under Installing tools', async () => {
+    const save = deferred<ProfileSetupResult>();
+    const readToolsProgress = jest.fn(async () => 'Installing packages… 64%');
+    const actions = fakeActions({readToolsProgress, saveProfile: jest.fn(() => save.promise)});
+    const {renderer, has, press, enterAccount, startWith} = await render(actions);
+    await startWith('debian');
+    await enterAccount();
+    await press('permissions-continue');
+    expect(has('setup-task-tools-working')).toBe(true);
+    expect(has('setup-task-tools-detail')).toBe(false);
+
+    // The row polls once a second.
+    await ReactTestRenderer.act(async () => { await new Promise(done => setTimeout(done, 1100)); });
+    expect(renderer.root.findByProps({testID: 'setup-task-tools-detail'}).props.children).toBe('Installing packages… 64%');
+
+    await ReactTestRenderer.act(async () => { save.resolve({kind: 'success'}); await Promise.resolve(); });
+    const polls = readToolsProgress.mock.calls.length;
+    await ReactTestRenderer.act(async () => { await new Promise(done => setTimeout(done, 1100)); });
+    // Polling stops once the tools are done.
+    expect(readToolsProgress.mock.calls.length).toBe(polls);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
+
   test('offers the file picker when Alpine cannot be downloaded', async () => {
     const actions = fakeActions({installRootfs: jest.fn(async (): Promise<RootfsSetupResult> => ({kind: 'error', errorCode: 'download_failed'}))});
     jest.mocked(actions.importRootfs)

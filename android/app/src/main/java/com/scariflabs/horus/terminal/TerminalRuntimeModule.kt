@@ -691,6 +691,24 @@ class TerminalRuntimeModule(
     }
   }
 
+  /** The provisioning script's latest package progress line, from the active distribution's home. */
+  override fun readProvisionProgress(promise: Promise) {
+    val result = Arguments.createMap()
+    try {
+      val distro = store.readActiveRecord()?.distro ?: RootfsCatalog.DISTRO_ALPINE
+      val file = File(paths.homeFor(distro), ".cache/horus/provision-progress")
+      result.putString("status", "success")
+      // The guest owns this file: never follow a link it planted, and read only a line's worth.
+      if (file.isFile && !java.nio.file.Files.isSymbolicLink(file.toPath()) && file.length() in 1..256) {
+        val line = file.readText(Charsets.UTF_8).trim()
+        if (line.isNotEmpty() && line.length <= 120 && line.none { it.isISOControl() }) result.putString("line", line)
+      }
+    } catch (_: Exception) {
+      result.putString("status", "error")
+    }
+    promise.resolve(result)
+  }
+
   override fun resetRuntime(request: ReadableMap, promise: Promise) {
     withRequestId(request, promise, ::resetError) { requestId ->
       val scope = stringField(request, "scope")

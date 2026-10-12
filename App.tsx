@@ -1,6 +1,6 @@
 import React from 'react';
 import {AppState} from 'react-native';
-import {activateRootfs, importRootfs, installRootfs, readTerminalRuntimeStatus} from './src/terminal/runtimeStatus';
+import {activateRootfs, importRootfs, installRootfs, readProvisionProgress, readTerminalRuntimeStatus} from './src/terminal/runtimeStatus';
 import {rootfsForDistro} from './src/terminal/distroContract';
 import {TerminalScreen} from './src/terminal/TerminalScreen';
 import {buildZshCommand, shellQuote} from './src/terminal/commandFactory';
@@ -204,6 +204,7 @@ function App(): React.JSX.Element {
   const onboardingActions = React.useMemo<OnboardingActions>(() => ({
     installRootfs: async distro => finishOnboardingRootfs(await installRootfs(BOOT_REQUEST_ID, undefined, {rootfsId: rootfsIdFor(distro)})),
     importRootfs: async distro => finishOnboardingRootfs(await importRootfs(IMPORT_REQUEST_ID, undefined, {rootfsId: rootfsIdFor(distro)})),
+    readToolsProgress: () => readProvisionProgress(),
     saveProfile: async (newUser, {skipTools, onToolsReady}) => {
       const setup = await setupOnboardingProfile(newUser, nextSessionRequestId('onboarding-shell'), {onToolsReady, skipTools});
       if (setup.kind === 'success') {

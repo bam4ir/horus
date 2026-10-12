@@ -1139,10 +1139,17 @@ class ProotSessionLauncher(
         pkgs_claude="bash curl ca-certificates git openssh-client zsh"
         pkgs_node="bash ca-certificates git openssh-client nodejs npm zsh"
         pkgs_procps="procps"
-        if [ ! -f /etc/apt/apt.conf.d/99horus ]; then
-          mkdir -p /etc/apt/apt.conf.d
-          printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Dpkg::Use-Pty "0";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
-        fi
+        # Rewritten every time so an older Horus's settings are replaced.
+        mkdir -p /etc/apt/apt.conf.d /etc/dpkg/dpkg.cfg.d
+        printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Acquire::Languages "none";' 'Dpkg::Use-Pty "0";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
+        # Every file dpkg writes is a trapped syscall under PRoot. Skip its
+        # per-file fsync (a broken install is simply provisioned again) and
+        # the docs, manuals, and translations nothing here reads.
+        printf '%s\n' force-unsafe-io \
+          'path-exclude=/usr/share/doc/*' 'path-include=/usr/share/doc/*/copyright' \
+          'path-exclude=/usr/share/man/*' 'path-exclude=/usr/share/info/*' \
+          'path-exclude=/usr/share/locale/*' 'path-include=/usr/share/locale/locale.alias' \
+          'path-exclude=/usr/share/lintian/*' > /etc/dpkg/dpkg.cfg.d/99horus
         export DEBIAN_FRONTEND=noninteractive
       else
         horus_pkg=apk
@@ -1152,19 +1159,57 @@ class ProotSessionLauncher(
         pkgs_node="bash ca-certificates git openssh-client-default nodejs npm zsh libgcc libstdc++"
         pkgs_procps="procps-ng"
       fi
+      # The latest progress line, for the app to show while tools install.
+      pkg_progress=/root/.cache/horus/provision-progress
+      pkg_status=/root/.cache/horus/pkg-status
+      # Turns apt's Status-Fd lines, or apk's "(12/47) Installing ..." log
+      # lines, into "Downloading packages… 37%" and "Installing packages…
+      # 64%", printed and kept in pkg_progress.
+      watch_packages() {
+        watch_last=
+        while sleep 1; do
+          if [ "${'$'}horus_pkg" = apt ]; then
+            watch_line=${'$'}(tail -n 1 "${'$'}pkg_status" 2>/dev/null) || continue
+          else
+            watch_line=${'$'}(grep -o '^([0-9]*/[0-9]*)' "${'$'}pkg_log" 2>/dev/null | tail -n 1 | tr -d '()') || continue
+          fi
+          watch_text=${'$'}(printf '%s\n' "${'$'}watch_line" | awk -F: '
+            /^dlstatus:/ { printf "Downloading packages… %d%%\n", ${'$'}3; exit }
+            /^pmstatus:/ { for (i = 3; i <= NF; i++) if (${'$'}i ~ /^[0-9]+(\.[0-9]+)?${'$'}/) { printf "Installing packages… %d%%\n", ${'$'}i; exit } }
+            /^[0-9]+\/[0-9]+${'$'}/ { split(${'$'}0, part, "/"); if (part[2] > 0) printf "Installing packages… %d%%\n", part[1] * 100 / part[2]; exit }
+          ')
+          if [ -n "${'$'}watch_text" ] && [ "${'$'}watch_text" != "${'$'}watch_last" ]; then
+            printf '%s\n' "${'$'}watch_text"
+            printf '%s\n' "${'$'}watch_text" > "${'$'}pkg_progress"
+            watch_last=${'$'}watch_text
+          fi
+        done
+      }
+      apt_with_status() { apt-get -o APT::Status-Fd=3 "${'$'}@" 3>>"${'$'}pkg_status"; }
       # pkg_install LOG PACKAGE... installs with the guest's package manager.
       # Callers pass a package list unquoted, so each package is one argument.
       pkg_install() {
         pkg_log=${'$'}1
         shift
+        : > "${'$'}pkg_status"
+        : > "${'$'}pkg_progress"
+        watch_packages &
+        pkg_watch_pid=${'$'}!
         if [ "${'$'}horus_pkg" = apt ]; then
+          pkg_result=0
           if [ -z "${'$'}(find /var/lib/apt/lists -maxdepth 1 -name '*_Packages*' -mmin -1440 2>/dev/null | head -n 1)" ]; then
-            run_logged "${'$'}pkg_log" apt-get update || return
+            run_logged "${'$'}pkg_log" apt-get update || pkg_result=${'$'}?
           fi
-          run_logged "${'$'}pkg_log" apt-get install -y --no-install-recommends "${'$'}@"
+          if [ "${'$'}pkg_result" -eq 0 ]; then
+            run_logged "${'$'}pkg_log" apt_with_status install -y --no-install-recommends "${'$'}@" || pkg_result=${'$'}?
+          fi
         else
-          run_logged "${'$'}pkg_log" apk add --no-cache --no-progress "${'$'}@"
+          if run_logged "${'$'}pkg_log" apk add --no-cache --no-progress "${'$'}@"; then pkg_result=0; else pkg_result=${'$'}?; fi
         fi
+        kill "${'$'}pkg_watch_pid" 2>/dev/null || true
+        wait "${'$'}pkg_watch_pid" 2>/dev/null || true
+        : > "${'$'}pkg_progress"
+        return "${'$'}pkg_result"
       }
     """.trimIndent()
     private val TOOLCHAIN_PROVISION_SCRIPT = """

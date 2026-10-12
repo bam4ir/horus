@@ -170,6 +170,12 @@ export type InstallRootfsRequest = {
   makeActive?: boolean;
 };
 
+export type ProvisionProgressResponse = {
+  status: 'success' | 'error';
+  /** The latest package progress line, e.g. "Installing packages… 64%"; absent when nothing is installing. */
+  line?: string;
+};
+
 export type ActivateRootfsRequest = {
   requestId: string;
   rootfsId: string;
@@ -542,6 +548,8 @@ export interface Spec extends TurboModule {
   /** Points new sessions at an installed rootfs without reinstalling it. */
   activateRootfs(request: ActivateRootfsRequest): Promise<ActivateRootfsResponse>;
   provisionToolchain(request: ProvisionToolchainRequest): Promise<ProvisionToolchainResponse>;
+  /** What the running system package install last reported, for progress while provisioning. */
+  readProvisionProgress(): Promise<ProvisionProgressResponse>;
   resetRuntime(request: ResetRuntimeRequest): Promise<ResetRuntimeResponse>;
   startSession(request: StartSessionRequest): Promise<StartSessionResponse>;
   listTerminalSessions(request: ListTerminalSessionsRequest): Promise<ListTerminalSessionsResponse>;

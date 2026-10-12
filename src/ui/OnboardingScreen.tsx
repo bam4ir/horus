@@ -29,6 +29,8 @@ export type OnboardingActions = Readonly<{
   installRootfs: (distro: LinuxDistro) => Promise<RootfsSetupResult>;
   /** Installs a rootfs archive for [distro] the user picks from storage. */
   importRootfs: (distro: LinuxDistro) => Promise<RootfsSetupResult>;
+  /** The latest package progress while tools install, e.g. "Installing packages… 64%". */
+  readToolsProgress?: () => Promise<string | undefined>;
   /** Installs the shell's tools (unless skipped) and creates the user. */
   saveProfile: (user: NewProfileUser, options: Readonly<{skipTools: boolean; onToolsReady: () => void}>) => Promise<ProfileSetupResult>;
   readDownloadSources: () => Promise<DownloadSources>;
@@ -355,6 +357,21 @@ function SetupStep({step, distro, user, rootfs, actions, onRootfs, onDone}: Setu
     if (rootfs.kind === 'ready' && profile.kind === 'idle') saveProfile(false);
   }, [onRootfs, profile.kind, rootfs.kind, saveProfile]);
 
+  // Poll the package manager's progress while the tools install.
+  const [toolsProgress, setToolsProgress] = React.useState<string | undefined>();
+  const toolsRunning = rootfs.kind === 'ready' && (profile.kind === 'tools' || profile.kind === 'idle');
+  React.useEffect(() => {
+    const read = actions.readToolsProgress;
+    if (!toolsRunning || read === undefined) {
+      setToolsProgress(undefined);
+      return undefined;
+    }
+    const timer = setInterval(() => {
+      read().then(line => { if (mountedRef.current) setToolsProgress(line); }).catch(() => undefined);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [actions.readToolsProgress, toolsRunning]);
+
   const linuxStatus: TaskStatus = rootfs.kind === 'ready' ? 'done' : rootfs.kind === 'failed' ? 'failed' : 'working';
   const toolsStatus: TaskStatus = rootfs.kind !== 'ready' ? 'waiting'
     : profile.kind === 'tools' || profile.kind === 'idle' ? 'working'
@@ -369,7 +386,7 @@ function SetupStep({step, distro, user, rootfs, actions, onRootfs, onDone}: Setu
         <StepHeader detail="This can take a few minutes." step={step} title="Installing Linux" />
         <View accessibilityLiveRegion="polite" style={styles.tasks}>
           <SetupTask label={linuxLabel} status={linuxStatus} testID="setup-task-linux" />
-          <SetupTask label="Installing tools" status={toolsStatus} testID="setup-task-tools" />
+          <SetupTask detail={toolsStatus === 'working' ? toolsProgress : undefined} label="Installing tools" status={toolsStatus} testID="setup-task-tools" />
           <SetupTask label={`Creating ${user.username}`} status={saveStatus} testID="setup-task-profile" />
         </View>
         {rootfs.kind === 'failed' ? <RootfsFailure distro={distro} errorCode={rootfs.errorCode} mirror={mirror} onImport={() => onRootfs('import')} onMirror={chooseMirror} onRetry={() => onRootfs('download')} /> : null}
@@ -395,15 +412,18 @@ function SetupStep({step, distro, user, rootfs, actions, onRootfs, onDone}: Setu
 
 type TaskStatus = 'waiting' | 'working' | 'done' | 'failed';
 
-function SetupTask({label, status, testID}: Readonly<{label: string; status: TaskStatus; testID: string}>): React.JSX.Element {
+function SetupTask({label, detail, status, testID}: Readonly<{label: string; detail?: string; status: TaskStatus; testID: string}>): React.JSX.Element {
   return (
-    <View accessibilityLabel={`${label}, ${status}`} style={styles.task} testID={`${testID}-${status}`}>
+    <View accessibilityLabel={`${label}, ${detail ?? status}`} style={styles.task} testID={`${testID}-${status}`}>
       <View style={styles.taskIcon}>
         {status === 'working' ? <ActivityIndicator color={uiColors.accent} size="small" />
           : status === 'done' ? <View style={[styles.checkMark, styles.checkMarkOn]}><EntryIcon kind="check" size={14} style={styles.checkIcon} /></View>
           : <View style={[styles.taskDot, status === 'failed' && styles.taskDotFailed]} />}
       </View>
-      <Text style={[styles.taskLabel, status === 'waiting' && styles.taskLabelWaiting, status === 'failed' && styles.taskLabelFailed]}>{label}</Text>
+      <View style={styles.taskBody}>
+        <Text style={[styles.taskLabel, status === 'waiting' && styles.taskLabelWaiting, status === 'failed' && styles.taskLabelFailed]}>{label}</Text>
+        {detail === undefined ? null : <Text style={styles.taskDetail} testID={`${testID}-detail`}>{detail}</Text>}
+      </View>
     </View>
   );
 }
@@ -566,7 +586,9 @@ const styles = StyleSheet.create({
   taskIcon: {alignItems: 'center', justifyContent: 'center', width: 22},
   taskDot: {borderColor: uiColors.border, borderRadius: 11, borderWidth: 1.5, height: 22, width: 22},
   taskDotFailed: {backgroundColor: uiColors.danger, borderColor: uiColors.danger},
-  taskLabel: {color: uiColors.ink, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 12},
+  taskBody: {flex: 1},
+  taskLabel: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 12},
+  taskDetail: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, marginTop: 3},
   taskLabelWaiting: {color: uiColors.subdued},
   taskLabelFailed: {color: uiColors.danger},
   problem: {marginTop: 20},

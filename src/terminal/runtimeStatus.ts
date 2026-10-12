@@ -335,6 +335,27 @@ async function runRootfsInstall(
   };
 }
 
+const PROVISION_PROGRESS_PATTERN = /^(Downloading|Installing) packages… (\d{1,3})%$/;
+
+/**
+ * What the running system package install last reported, e.g.
+ * "Installing packages… 64%", or undefined when nothing is reported.
+ * Anything other than that exact shape is ignored.
+ */
+export async function readProvisionProgress(
+  runtime: Pick<Spec, 'readProvisionProgress'> | null = nativeTerminalRuntime,
+): Promise<string | undefined> {
+  if (runtime === null) return undefined;
+  try {
+    const response: unknown = await runtime.readProvisionProgress();
+    if (typeof response !== 'object' || response === null) return undefined;
+    const line = (response as {line?: unknown}).line;
+    return typeof line === 'string' && PROVISION_PROGRESS_PATTERN.test(line) ? line : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Provisions only the shell or harness requested for the first launch. */
 export async function provisionAlpineToolchain(
   requestId: string,
