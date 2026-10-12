@@ -11,6 +11,8 @@ import {formatSessionAge, sessionTitle} from '../terminal/toolchainLabels';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BrandHeader, uiColors} from './brand';
 import {InteractivePressable as Pressable} from './InteractivePressable';
+import {ProfileAvatar} from './ProfileAvatar';
+import {DISTRO_NAMES, type ProfileUser} from '../profile/profileStore';
 
 export type MetroLaunchTarget = Readonly<{
   title: string;
@@ -26,6 +28,9 @@ export type MetroLaunchTarget = Readonly<{
 
 export type MetroHomeScreenProps = Readonly<{
   githubAccount?: GithubAccount;
+  /** Who is signed in, so it is clear whose Linux the sessions run in. */
+  user?: ProfileUser;
+  onOpenUser?: () => void;
   onOpen: (target: MetroLaunchTarget) => void;
   onOpenGithubLogin: () => void;
   onOpenGithubAccount?: () => void;
@@ -74,7 +79,7 @@ function AppTile({icon, logo, title, detail, onPress}: AppTileProps): React.JSX.
   );
 }
 
-export function MetroHomeScreen({githubAccount, onOpen, onOpenGithubLogin, onOpenGithubAccount, onOpenSettings, loadRecentSessions, onResumeSession, onTerminateSession}: MetroHomeScreenProps): React.JSX.Element {
+export function MetroHomeScreen({githubAccount, user, onOpenUser, onOpen, onOpenGithubLogin, onOpenGithubAccount, onOpenSettings, loadRecentSessions, onResumeSession, onTerminateSession}: MetroHomeScreenProps): React.JSX.Element {
   const [snapshot, setSnapshot] = React.useState<DeviceSnapshot | null>(null);
   const [recentSessions, setRecentSessions] = React.useState<readonly ActiveTerminalSession[]>([]);
   const [terminatingSessions, setTerminatingSessions] = React.useState<ReadonlySet<string>>(() => new Set());
@@ -167,32 +172,61 @@ export function MetroHomeScreen({githubAccount, onOpen, onOpenGithubLogin, onOpe
         />
 
         <View style={styles.menuPanel} testID="metro-menu">
-          <Pressable
-            accessibilityLabel={githubAccount === undefined ? 'Log in to GitHub' : `GitHub account, @${githubAccount.username}`}
-            accessibilityRole="button"
-            onPress={() => {
-              if (githubAccount === undefined) {
-                onOpenGithubLogin();
-                return;
-              }
-              if (onOpenGithubAccount !== undefined) {
-                onOpenGithubAccount();
-                return;
-              }
-            }}
-            style={styles.githubTile}
-            testID="metro-github">
-            <View style={styles.githubCopy}>
-              <Text style={styles.tileLabel} testID="metro-github-eyebrow">GITHUB</Text>
-              <Text adjustsFontSizeToFit minimumFontScale={0.65} numberOfLines={1} style={styles.githubTitle} testID="metro-github-title">{githubAccount === undefined ? 'Login to GitHub' : `@${githubAccount.username}`}</Text>
-            </View>
-            <View style={styles.githubSeparator} />
-            <View style={styles.githubAction}>
-              {githubAccount?.avatarUrl === undefined
-                ? <Image accessibilityLabel="GitHub" source={require('../../assets/ui/github-mark.png')} style={styles.githubMark} testID="metro-github-mark" />
-                : <Image accessibilityLabel={`${githubAccount.username} GitHub profile image`} source={{uri: githubAccount.avatarUrl}} style={styles.githubAvatar} testID="metro-github-avatar" />}
-            </View>
-          </Pressable>
+          <View style={styles.identityRow}>
+            {user === undefined ? null : (
+              <Pressable
+                accessibilityLabel={`Signed in as ${user.username}, ${DISTRO_NAMES[user.distro]}`}
+                accessibilityRole="button"
+                onPress={onOpenUser}
+                style={[styles.githubTile, styles.halfTile]}
+                testID="metro-user">
+                <ProfileAvatar avatar={user.avatar} selected size={48} />
+                <View style={[styles.githubCopy, styles.userCopy]}>
+                  <Text adjustsFontSizeToFit minimumFontScale={0.65} numberOfLines={1} style={styles.halfTitle} testID="metro-user-name">{user.username}</Text>
+                  <Text numberOfLines={1} style={[styles.tileLabel, styles.userDistro]} testID="metro-user-distro">{DISTRO_NAMES[user.distro].toUpperCase()}</Text>
+                </View>
+              </Pressable>
+            )}
+            <Pressable
+              accessibilityLabel={githubAccount === undefined ? 'Log in to GitHub' : `GitHub account, @${githubAccount.username}`}
+              accessibilityRole="button"
+              onPress={() => {
+                if (githubAccount === undefined) {
+                  onOpenGithubLogin();
+                  return;
+                }
+                if (onOpenGithubAccount !== undefined) {
+                  onOpenGithubAccount();
+                  return;
+                }
+              }}
+              style={[styles.githubTile, user !== undefined && styles.halfTile]}
+              testID="metro-github">
+              {user === undefined ? null : (
+                <View style={[styles.githubAction, styles.halfAction]}>
+                  {githubAccount?.avatarUrl === undefined
+                    ? <Image accessibilityLabel="GitHub" source={require('../../assets/ui/github-mark.png')} style={styles.halfMark} testID="metro-github-mark" />
+                    : <Image accessibilityLabel={`${githubAccount.username} GitHub profile image`} source={{uri: githubAccount.avatarUrl}} style={styles.halfAction} testID="metro-github-avatar" />}
+                </View>
+              )}
+              <View style={[styles.githubCopy, user !== undefined && styles.userCopy]}>
+                <Text style={styles.tileLabel} testID="metro-github-eyebrow">GITHUB</Text>
+                <Text adjustsFontSizeToFit minimumFontScale={0.65} numberOfLines={1} style={user === undefined ? styles.githubTitle : styles.halfTitle} testID="metro-github-title">
+                  {githubAccount !== undefined ? `@${githubAccount.username}` : user === undefined ? 'Login to GitHub' : 'Log in'}
+                </Text>
+              </View>
+              {user !== undefined ? null : (
+                <>
+                  <View style={styles.githubSeparator} />
+                  <View style={styles.githubAction}>
+                    {githubAccount?.avatarUrl === undefined
+                      ? <Image accessibilityLabel="GitHub" source={require('../../assets/ui/github-mark.png')} style={styles.githubMark} testID="metro-github-mark" />
+                      : <Image accessibilityLabel={`${githubAccount.username} GitHub profile image`} source={{uri: githubAccount.avatarUrl}} style={styles.githubAvatar} testID="metro-github-avatar" />}
+                  </View>
+                </>
+              )}
+            </Pressable>
+          </View>
 
           <View style={styles.statsPanel}>
             <StatTile label="STORAGE" value={snapshot === null ? '—' : formatBytes(snapshot.freeStorageBytes)} detail={snapshot === null ? 'checking' : 'available'} divided />
@@ -269,7 +303,15 @@ const styles = StyleSheet.create({
   menuPanel: {backgroundColor: uiColors.background, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, marginTop: 0, padding: 10},
   activeSessionsPanel: {backgroundColor: uiColors.background, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, marginTop: 12, padding: 10},
   panelSectionLabel: {marginTop: 0},
-  githubTile: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, flexDirection: 'row', marginTop: 0, minHeight: 98, padding: 12},
+  // The signed-in user and GitHub share the first row, half each.
+  identityRow: {flexDirection: 'row', gap: 10},
+  halfTile: {flex: 1, minHeight: 76, minWidth: 0, padding: 10},
+  halfTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 16, fontWeight: '800'},
+  halfAction: {borderRadius: 8, height: 48, width: 48},
+  halfMark: {height: 28, width: 28},
+  userCopy: {marginLeft: 10},
+  userDistro: {color: uiColors.accent, marginTop: 4},
+  githubTile: {flex: 1, alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, flexDirection: 'row', marginTop: 0, minHeight: 98, padding: 12},
   githubCopy: {flex: 1, minWidth: 0},
   tileLabel: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, letterSpacing: 0.6},
   githubTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', marginTop: 6},

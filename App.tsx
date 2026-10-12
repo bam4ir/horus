@@ -67,6 +67,8 @@ function App(): React.JSX.Element {
   const [runtimeReady, setRuntimeReady] = React.useState(false);
   const [bootError, setBootError] = React.useState<string | undefined>();
   const [profile, setProfile] = React.useState<UserProfile | null>(null);
+  // The distribution new sessions run in, which says who is signed in.
+  const [activeDistro, setActiveDistro] = React.useState<string | undefined>();
   const [profileError, setProfileError] = React.useState<string | undefined>();
   const [lockNotice, setLockNotice] = React.useState<string | undefined>();
   const [terminalTarget, setTerminalTarget] = React.useState<MetroLaunchTarget>({
@@ -183,6 +185,7 @@ function App(): React.JSX.Element {
       const stillUnlocked = !__DEV__ && existingProfile !== null && await updateUnlockGrant('resume');
       if (!mounted) return;
       setRuntimeReady(true);
+      setActiveDistro(runtime.activeDistro);
       setRoute(__DEV__ ? 'terminal' : existingProfile === null ? 'onboarding' : stillUnlocked ? 'home' : 'login');
     };
     void bootstrap();
@@ -212,6 +215,7 @@ function App(): React.JSX.Element {
         setLockNotice(undefined);
         const user: ProfileUser = {distro: newUser.distro, username: newUser.username, avatar: newUser.avatar};
         setProfile({users: [user]});
+        setActiveDistro(newUser.distro);
       }
       return setup;
     },
@@ -245,6 +249,7 @@ function App(): React.JSX.Element {
       return;
     }
     void updateUnlockGrant('grant');
+    setActiveDistro(user.distro);
     setProfileError(undefined);
     setLockNotice(undefined);
     setRoute('home');
@@ -591,6 +596,8 @@ function App(): React.JSX.Element {
     return (
       <MetroHomeScreen
         githubAccount={githubAccount}
+        user={profile?.users.find(candidate => candidate.distro === activeDistro)}
+        onOpenUser={openSettings}
         loadRecentSessions={loadRecentSessions}
         onOpenGithubLogin={openHomeGithubLogin}
         onOpenGithubAccount={openGithubAccount}
