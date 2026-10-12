@@ -60,4 +60,27 @@ describe('SessionSettingsScreen', () => {
     expect(openUrl).toHaveBeenCalledWith('https://www.scariflabs.com/horus/docs');
     await ReactTestRenderer.act(async () => { renderer?.unmount(); });
   });
+
+  test('lists each user and offers to add the missing distribution', async () => {
+    const onAddUser = jest.fn();
+    let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    const alpine = {distro: 'alpine', username: 'horus', avatar: 'falcon'} as const;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<SessionSettingsScreen onAddUser={onAddUser} onBack={() => undefined} readSettings={async () => settings(1)} users={[alpine]} />);
+      await Promise.resolve();
+    });
+    expect(renderer?.root.findByProps({testID: 'settings-user-alpine'}).props.label).toBe('horus');
+    expect(renderer?.root.findByProps({testID: 'settings-user-alpine'}).props.detail).toBe('Alpine · /home/horus');
+    await ReactTestRenderer.act(async () => {
+      renderer?.root.findByProps({testID: 'settings-add-user'}).props.onPress();
+    });
+    expect(onAddUser).toHaveBeenCalledTimes(1);
+
+    await ReactTestRenderer.act(async () => {
+      renderer?.update(<SessionSettingsScreen onAddUser={onAddUser} onBack={() => undefined} readSettings={async () => settings(1)} users={[alpine, {distro: 'debian', username: 'deb', avatar: 'ibis'}]} />);
+    });
+    expect(renderer?.root.findAllByProps({testID: 'settings-add-user'})).toHaveLength(0);
+    expect(renderer?.root.findByProps({testID: 'settings-user-debian'}).props.detail).toBe('Debian · /home/deb');
+    await ReactTestRenderer.act(async () => { renderer?.unmount(); });
+  });
 });

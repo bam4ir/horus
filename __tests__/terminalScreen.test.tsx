@@ -627,7 +627,7 @@ describe('TerminalScreen', () => {
     });
 
     expect(onCommandFailure).toHaveBeenCalledTimes(1);
-    expect(renderer.root.findByProps({testID: 'session-limit-warning-title'}).props.children).toEqual(['Close an app to open ', 'Alpine shell']);
+    expect(renderer.root.findByProps({testID: 'session-limit-warning-title'}).props.children).toEqual(['Close an app to open ', 'Linux shell']);
     expect(renderer.root.findByProps({testID: 'session-limit-warning-overlay'}).props.style).toMatchObject({
       justifyContent: 'center',
       position: 'absolute',

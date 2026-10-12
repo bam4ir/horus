@@ -9,6 +9,8 @@ import {RemoteAccessPanel} from './RemoteAccessPanel';
 import {SettingsAction, SettingsExternalMark, SettingsRow, SettingsSection} from './SettingsList';
 import {UI_FONT_FAMILY} from './typography';
 import {useHardwareBack} from './useHardwareBack';
+import {DISTRO_NAMES, LINUX_DISTROS, type ProfileUser} from '../profile/profileStore';
+import {ProfileAvatar} from './ProfileAvatar';
 import {
   readSessionSettings,
   TERMINAL_SESSION_LIMIT_MAX,
@@ -22,6 +24,10 @@ export const HORUS_DOCS_URL = 'https://www.scariflabs.com/horus/docs';
 
 type SessionSettingsScreenProps = Readonly<{
   onBack: () => void;
+  /** Every user, at most one per distribution. */
+  users?: readonly ProfileUser[];
+  /** Opens the flow that adds the user for the distribution without one. */
+  onAddUser?: () => void;
   openUrl?: (url: string) => Promise<unknown>;
   readSettings?: () => Promise<SessionSettingsResult>;
   saveLimit?: (limit: number) => Promise<SessionSettingsResult>;
@@ -37,7 +43,7 @@ function limitLabel(limit: number): string {
   return limit === 1 ? '1 app' : `${limit} apps`;
 }
 
-export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(url), readSettings = readSessionSettings, saveLimit = writeSessionLimit}: SessionSettingsScreenProps): React.JSX.Element {
+export function SessionSettingsScreen({onBack, users = [], onAddUser, openUrl = url => Linking.openURL(url), readSettings = readSessionSettings, saveLimit = writeSessionLimit}: SessionSettingsScreenProps): React.JSX.Element {
   const [settings, setSettings] = React.useState<SessionSettings | undefined>();
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -131,6 +137,8 @@ export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(
           />
         </SettingsSection>
 
+        <UsersSection onAddUser={onAddUser} users={users} />
+
         <BackgroundPermissionsPanel />
         <RemoteAccessPanel />
         <DownloadSourcesPanel />
@@ -148,6 +156,36 @@ export function SessionSettingsScreen({onBack, openUrl = url => Linking.openURL(
         </SettingsSection>
       </ScrollView>
     </ScreenShell>
+  );
+}
+
+/** One user per distribution; the missing one can be added here. */
+function UsersSection({users, onAddUser}: Readonly<{users: readonly ProfileUser[]; onAddUser?: () => void}>): React.JSX.Element | null {
+  if (users.length === 0) return null;
+  const missing = LINUX_DISTROS.find(distro => !users.some(user => user.distro === distro));
+  return (
+    <SettingsSection
+      footer={users.length > 1 ? 'Each user has their own Linux and home. Lock Horus and sign in as the other user to switch; running sessions keep going.' : undefined}
+      testID="settings-users"
+      title="USERS">
+      {users.map(user => (
+        <SettingsRow
+          key={user.distro}
+          detail={`${DISTRO_NAMES[user.distro]} · /home/${user.username}`}
+          label={user.username}
+          right={<ProfileAvatar avatar={user.avatar} size={36} />}
+          testID={`settings-user-${user.distro}`}
+        />
+      ))}
+      {missing === undefined || onAddUser === undefined ? null : (
+        <SettingsRow
+          detail={missing === 'debian' ? 'glibc and apt, for tools Alpine can’t run. Experimental.' : 'Small and fast, with musl and apk.'}
+          label={`Add a ${DISTRO_NAMES[missing]} user`}
+          right={<SettingsAction label="ADD" onPress={onAddUser} testID="settings-add-user" />}
+          testID={`settings-add-${missing}`}
+        />
+      )}
+    </SettingsSection>
   );
 }
 

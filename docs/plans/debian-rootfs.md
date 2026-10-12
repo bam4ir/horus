@@ -39,15 +39,13 @@ same home, it would see `claude.ready`, skip the install, and run a musl binary
 on glibc. Going back to Alpine after a Debian install would hit the opposite
 problem.
 
-**Decision: per-distro tool state, shared user data.** Keep `home/` as Alpine's
-home (no migration for existing users). Give Debian its own `homes/debian/`
-for `~/.local` and `~/.cache/horus`, and bind the shared bits that are about the
-user rather than the libc (`~/.ssh`, `~/.gitconfig`, `~/.config/gh`, harness
-auth/config under `harness-homes/`). Workspaces are shared as-is.
-
-Simpler fallback if the selective binds get messy: fully separate home per
-distro, shared workspaces only. Users then sign in to gh/harnesses once per
-distro.
+**Decision (revised 2026-10-12): one Linux user per distribution, each with
+a separate home.** Users asked for a login per distribution, like a normal
+multi-user Linux machine, so the selective binds are not needed: Alpine keeps
+`home/` and `harness-homes/` (no migration), Debian gets
+`homes/debian/home` and `homes/debian/harness-homes/`. Workspaces stay
+shared. Each user signs in to gh and the harnesses once. Paired computer keys
+are copied into every user's home.
 
 ## Phases
 
@@ -164,20 +162,33 @@ Ship-safe on its own. **Estimate: ~1 day.**
 
 **Estimate: ~1.5–2 days.** The script is long and every branch needs a run.
 
-### Phase 5: UI
+Status (2026-10-12): done. The guest detects `apt-get` or `apk`, so one
+script serves both. Debian has no BusyBox, so sessions and the SSH server
+switch to the user with util-linux `setpriv` (no PAM, which PRoot's emulated
+root cannot satisfy); Alpine keeps `busybox su`. Debian's zsh does not read
+`/etc/zsh/zshrc.d`, so the SSH-only Claude messaging wrapper is Alpine-only
+for now, and the remote agent installer cannot apt-install as the user (the
+app's tiles install system packages as root).
 
-1. Onboarding: "Linux distribution" step with two cards. Alpine (default,
-   ~4 MB, "small and fast") and Debian (experimental, ~18 MB, "glibc, wider
-   tool support").
-2. Settings: same choice. Switching installs the other rootfs if needed, then
-   flips `active.json`. Both stay on disk. Show size used per distro, with a
-   "remove" action for the inactive one.
-3. Copy that names Alpine at runtime ("Alpine shell install starting…",
-   "Alpine shell closed") uses the active distro's name.
-4. Running sessions keep their rootfs; switching only affects new sessions.
-   Say so in the confirmation.
+### Phase 5: Users and UI
 
-**Estimate: ~1 day.**
+Done as a user per distribution rather than a distro setting:
+
+1. Users (`ProfileUsersCore`): at most one per distribution, each with a
+   real Linux username, one of nine hieroglyph avatars (`assets/avatars`),
+   and their own password. Alpine keeps the 1.0.x verifier keys; an install
+   from before usernames reads as `horus` with the falcon. One lockout is
+   shared by every user, and USB pairing accepts either password.
+2. Onboarding: welcome, Alpine or Debian (Alpine selected), the user
+   (hieroglyph, username, password), permissions, install, keys. The download
+   starts when the distribution is chosen.
+3. Login: a greeter showing every user; signing in activates that user's
+   rootfs (`activateRootfs`, no reinstall). Running sessions keep going.
+4. Settings: a USERS section lists users and adds the missing one, which
+   installs that distribution beside the active one (`makeActive: false`).
+   The new user's tools install the first time they open a terminal.
+5. Not done yet: removing a distribution, renaming a user, and a Debian
+   mirror setting.
 
 ### Phase 6: Testing
 

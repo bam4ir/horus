@@ -1,6 +1,7 @@
 import React from 'react';
 import {AppState} from 'react-native';
-import {importRootfs, installRootfs, readTerminalRuntimeStatus} from './src/terminal/runtimeStatus';
+import {activateRootfs, importRootfs, installRootfs, readTerminalRuntimeStatus} from './src/terminal/runtimeStatus';
+import {rootfsForDistro} from './src/terminal/distroContract';
 import {TerminalScreen} from './src/terminal/TerminalScreen';
 import {buildZshCommand, shellQuote} from './src/terminal/commandFactory';
 import {TerminalSessionClient} from './src/terminal/session/sessionClient';
@@ -11,12 +12,13 @@ import {clearStoredGithubAccount, readStoredGithubAccount, saveGithubAccount} fr
 import {GITHUB_AUTH_LOGIN_COMMAND, openGithubDeviceLoginUrl} from './src/projects/githubDeviceLogin';
 import type {ProjectSummary} from './src/projects/projectTypes';
 import {WORKSPACE_PROJECTS_DIRECTORY, buildProjectCloneCommand, harnessSessionTarget, printHiddenMarker, workspaceProjectDirectory} from './src/projects/projectCommands';
-import {lockedOutMessage, readUserProfile, verifyUserPassword, type UserProfile} from './src/profile/profileStore';
+import {DISTRO_NAMES, lockedOutMessage, readUserProfile, verifyUserPassword, type LinuxDistro, type ProfileUser, type UserProfile} from './src/profile/profileStore';
 import {setupOnboardingProfile} from './src/profile/onboardingSetup';
 import {readDownloadSources, writeDownloadSources} from './src/terminal/downloadSources';
 import {LoadingScreen} from './src/ui/LoadingScreen';
 import {MetroHomeScreen, type MetroLaunchTarget} from './src/ui/MetroHomeScreen';
 import {OnboardingScreen, type OnboardingActions, type RootfsSetupResult} from './src/ui/OnboardingScreen';
+import {AddUserScreen} from './src/ui/AddUserScreen';
 import {ProjectHubScreen} from './src/ui/ProjectHubScreen';
 import {LoginScreen} from './src/ui/LoginScreen';
 import {FileExplorerScreen} from './src/ui/FileExplorerScreen';
@@ -29,11 +31,19 @@ import {consumeLaunchSessionId} from './src/terminal/session/launchSession';
 import {sessionTitle} from './src/terminal/toolchainLabels';
 import {createRequestIdFactory} from './src/terminal/requestIds';
 
-type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'github-account' | 'projects' | 'files' | 'terminal';
+type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'add-user' | 'github-account' | 'projects' | 'files' | 'terminal';
 type BootState = 'checking' | 'installing' | 'error';
 
 const BOOT_REQUEST_ID = 'horus-bootstrap-1';
 const IMPORT_REQUEST_ID = 'horus-import-1';
+const ACTIVATE_REQUEST_ID = 'horus-activate-1';
+
+/** The catalog rootfs id of a distribution; every distribution Horus offers has one. */
+function rootfsIdFor(distro: LinuxDistro): string {
+  const entry = rootfsForDistro(distro);
+  if (entry === undefined) throw new Error(`no rootfs for ${distro}`);
+  return entry.rootfsId;
+}
 const nextSessionRequestId = createRequestIdFactory('launcher');
 const BARE_SHELL_COMMAND = buildZshCommand(`mkdir -p ${WORKSPACE_PROJECTS_DIRECTORY} && cd ${WORKSPACE_PROJECTS_DIRECTORY} && exec zsh -l`);
 
@@ -192,14 +202,14 @@ function App(): React.JSX.Element {
   }, []);
 
   const onboardingActions = React.useMemo<OnboardingActions>(() => ({
-    installRootfs: async () => finishOnboardingRootfs(await installRootfs(BOOT_REQUEST_ID)),
-    importRootfs: async () => finishOnboardingRootfs(await importRootfs(IMPORT_REQUEST_ID)),
-    saveProfile: async (password, {skipTools, onToolsReady}) => {
-      const user = {distro: 'alpine', username: 'horus', avatar: 'falcon'} as const;
-      const setup = await setupOnboardingProfile({...user, password}, nextSessionRequestId('onboarding-shell'), {onToolsReady, skipTools});
+    installRootfs: async distro => finishOnboardingRootfs(await installRootfs(BOOT_REQUEST_ID, undefined, {rootfsId: rootfsIdFor(distro)})),
+    importRootfs: async distro => finishOnboardingRootfs(await importRootfs(IMPORT_REQUEST_ID, undefined, {rootfsId: rootfsIdFor(distro)})),
+    saveProfile: async (newUser, {skipTools, onToolsReady}) => {
+      const setup = await setupOnboardingProfile(newUser, nextSessionRequestId('onboarding-shell'), {onToolsReady, skipTools});
       if (setup.kind === 'success') {
         void updateUnlockGrant('grant');
         setLockNotice(undefined);
+        const user: ProfileUser = {distro: newUser.distro, username: newUser.username, avatar: newUser.avatar};
         setProfile({users: [user]});
       }
       return setup;
@@ -215,14 +225,22 @@ function App(): React.JSX.Element {
     },
   }), [finishOnboardingRootfs]);
 
-  const login = React.useCallback(async (password: string) => {
+  // Signing in as a user also points new sessions at that user's distribution.
+  const login = React.useCallback(async (user: ProfileUser, password: string) => {
     if (profile === null) {
       setProfileError('Incorrect password.');
       return;
     }
-    const check = await verifyUserPassword(profile.users[0].distro, password);
+    const check = await verifyUserPassword(user.distro, password);
     if (check.kind !== 'success') {
       setProfileError(check.kind === 'locked' ? lockedOutMessage(check.retryAfterMs) : 'Incorrect password.');
+      return;
+    }
+    const activated = await activateRootfs(ACTIVATE_REQUEST_ID, rootfsIdFor(user.distro));
+    if (activated.kind !== 'success') {
+      setProfileError(activated.errorCode === 'not_installed'
+        ? `${DISTRO_NAMES[user.distro]} isn’t installed anymore. Sign in as another user, or reinstall it from Settings.`
+        : `Couldn’t switch to ${DISTRO_NAMES[user.distro]} (${activated.errorCode}).`);
       return;
     }
     void updateUnlockGrant('grant');
@@ -240,7 +258,7 @@ function App(): React.JSX.Element {
     setRoute('login');
   }, []);
 
-  const authenticated = route === 'home' || route === 'settings' || route === 'github-account' || route === 'projects' || route === 'files' || route === 'terminal';
+  const authenticated = route === 'home' || route === 'settings' || route === 'add-user' || route === 'github-account' || route === 'projects' || route === 'files' || route === 'terminal';
   useBackgroundSessionLock(!__DEV__ && profile !== null && authenticated, lockSession);
   useUnlockGrantAppState(!__DEV__ && profile !== null && authenticated);
 
@@ -561,7 +579,7 @@ function App(): React.JSX.Element {
     return <LoadingScreen onDebugTerminal={__DEV__ ? openDebugTerminal : undefined} onImport={importDownloadedRootfs} onRetry={() => setRetryCount(value => value + 1)} status={bootState} detail={bootError} />;
   }
   if (!__DEV__ && route === 'login' && profile !== null) {
-    return <LoginScreen error={profileError} notice={lockNotice} onLogin={login} />;
+    return <LoginScreen error={profileError} notice={lockNotice} onLogin={login} users={profile.users} />;
   }
   if ((profile === null && !__DEV__) || (!__DEV__ && route === 'onboarding')) {
     return <OnboardingScreen actions={onboardingActions} rootfsInstalled={runtimeReady} />;
@@ -581,7 +599,19 @@ function App(): React.JSX.Element {
     );
   }
   if (route === 'settings') {
-    return <SessionSettingsScreen onBack={() => setRoute('home')} />;
+    return <SessionSettingsScreen onAddUser={() => setRoute('add-user')} onBack={() => setRoute('home')} users={profile?.users ?? []} />;
+  }
+  if (route === 'add-user' && profile !== null) {
+    return (
+      <AddUserScreen
+        existingUsers={profile.users}
+        onBack={() => setRoute('settings')}
+        onCreated={user => {
+          setProfile({users: [...profile.users, user].sort((a, b) => a.distro.localeCompare(b.distro))});
+          setRoute('settings');
+        }}
+      />
+    );
   }
   if (route === 'github-account' && githubAccount !== undefined) {
     return <GithubAccountScreen account={githubAccount} error={githubAccountError} onBack={leaveGithubAccount} onLogout={logoutGithubAccount} />;

@@ -4,6 +4,8 @@ import {NativeModules} from 'react-native';
 export const LINUX_DISTROS = ['alpine', 'debian'] as const;
 export type LinuxDistro = (typeof LINUX_DISTROS)[number];
 
+export const DISTRO_NAMES: Readonly<Record<LinuxDistro, string>> = {alpine: 'Alpine', debian: 'Debian'};
+
 /** Avatar ids, mirrored from ProfileUsersCore.AVATARS; each names an image in assets/avatars. */
 export const AVATAR_IDS = ['falcon', 'ibis', 'jackal', 'cat', 'cobra', 'scarab', 'lotus', 'papyrus', 'sun-disk'] as const;
 export type AvatarId = (typeof AVATAR_IDS)[number];
