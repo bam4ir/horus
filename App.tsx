@@ -241,6 +241,16 @@ function App(): React.JSX.Element {
       setProfileError(check.kind === 'locked' ? lockedOutMessage(check.retryAfterMs) : 'Incorrect password.');
       return;
     }
+    // Sessions belong to whoever started them: switching user ends them, so
+    // the new user never sees or reattaches to the previous user's shells.
+    if (activeDistro !== undefined && activeDistro !== user.distro) {
+      const stopped = await sessionClient.stopAllTerminalSessions(nextSessionRequestId('switch-user'), 'user_stop');
+      if (stopped.kind !== 'applied') {
+        setProfileError('Couldn’t stop the other user’s sessions. Try again.');
+        return;
+      }
+      setPendingCompletion(undefined);
+    }
     const activated = await activateRootfs(ACTIVATE_REQUEST_ID, rootfsIdFor(user.distro));
     if (activated.kind !== 'success') {
       setProfileError(activated.errorCode === 'not_installed'
@@ -253,7 +263,7 @@ function App(): React.JSX.Element {
     setProfileError(undefined);
     setLockNotice(undefined);
     setRoute('home');
-  }, [profile]);
+  }, [profile, activeDistro, sessionClient, setPendingCompletion]);
 
   // Locking only hides the workspace. Running harnesses and shells keep
   // working behind the password screen and are in Recents after unlock.
