@@ -2,6 +2,7 @@ Generate a set of 9 avatar images for "Horus", an Android app whose logo is a fl
 
 Shared style (identical for every image, so the 9 read as one set):
 - Flat, solid silhouette of a classic Egyptian hieroglyph, in the spirit of carved hieroglyphs: bold, simple, iconic, side profile for animals, the way hieroglyphs are drawn.
+- Every profile glyph faces right (head on the right side of the canvas).
 - Exactly two colours: the glyph is solid lime green #80EB12; the background is pure black #000000. No gradients, no texture, no outlines in another colour, no shadows, no glow, no text, no frame, no border, no cartouche.
 - Interior detail (eye, wing feathers, petals) is cut out as black negative space, like a stencil. Keep cuts few and chunky so it still reads at 48 px.
 - Square 1024x1024, glyph centred, filling about 70% of the canvas, with even padding so it fits inside a circle crop.
