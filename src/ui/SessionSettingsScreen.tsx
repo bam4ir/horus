@@ -184,7 +184,7 @@ function UsersSection({users, onAddUser}: Readonly<{users: readonly ProfileUser[
       {missing === undefined || onAddUser === undefined ? null : (
         <SettingsRow
           detail={missing === 'debian' ? 'glibc and apt, for tools Alpine can’t run. Experimental.' : 'Small and fast, with musl and apk.'}
-          label={`Add a ${DISTRO_NAMES[missing]} user`}
+          label={`Add ${missing === 'alpine' ? 'an' : 'a'} ${DISTRO_NAMES[missing]} user`}
           right={<SettingsAction label="ADD" onPress={onAddUser} testID="settings-add-user" />}
           testID={`settings-add-${missing}`}
         />
