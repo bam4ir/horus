@@ -562,7 +562,8 @@ class TerminalSessionService : Service() {
       rows = rows,
       columns = columns,
       command = command,
-      startedAtMs = recoverable?.startedAtMs ?: System.currentTimeMillis(),
+      // Every start below is a fresh process, so its age starts now.
+      startedAtMs = System.currentTimeMillis(),
       toolchainTarget = toolchainTarget,
     )
     val wasPendingRecord = recoverable != null && reuseId != null
@@ -1100,7 +1101,12 @@ class TerminalSessionService : Service() {
         is TerminalSessionSpecFactory.BuildOutcome.Success -> {
           sessionStartElapsedMs[record.sessionId] = SystemClock.elapsedRealtime()
           when (supervisor.start(record.sessionId, built.spec)) {
-            is TerminalSessionSupervisor.StartOutcome.Success -> Unit
+            is TerminalSessionSupervisor.StartOutcome.Success -> {
+              // Same command, fresh process: Recents counts its age from now.
+              val restarted = record.copy(startedAtMs = System.currentTimeMillis())
+              sessionRecords[record.sessionId] = restarted
+              runCatching { journal.upsert(restarted) }
+            }
             is TerminalSessionSupervisor.StartOutcome.Failure -> sessionStartElapsedMs.remove(record.sessionId)
           }
         }
