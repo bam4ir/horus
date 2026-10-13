@@ -62,6 +62,9 @@ export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): 
                 accessibilityLabel={`${user.username}, ${DISTRO_NAMES[user.distro]}`}
                 accessibilityRole="radio"
                 accessibilityState={{checked: isSelected}}
+                // Keyboard focus would draw Android's square highlight over the
+                // rounded tile, and leave it there; Tab goes to the password.
+                focusable={false}
                 onPress={() => choose(user)}
                 style={[styles.user, isSelected && styles.userSelected]}
                 testID={`login-user-${user.distro}${isSelected ? '-selected' : ''}`}>
