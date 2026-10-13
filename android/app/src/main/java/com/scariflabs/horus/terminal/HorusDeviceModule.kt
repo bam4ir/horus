@@ -55,6 +55,7 @@ class HorusDeviceModule(
           putDouble("freeMemoryBytes", memory.availMem.toDouble().coerceAtLeast(0.0))
           putDouble("totalMemoryBytes", memory.totalMem.toDouble().coerceAtLeast(0.0))
           putBoolean("wifiConnected", isWifiConnected())
+          putBoolean("online", isOnline())
           putDouble("batteryPercent", batteryPercent)
           putDouble("capturedAtMs", System.currentTimeMillis().toDouble())
         },
@@ -292,6 +293,15 @@ class HorusDeviceModule(
     val network = manager.activeNetwork ?: return false
     val capabilities = manager.getNetworkCapabilities(network) ?: return false
     return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+  }
+
+  /** A network Android has validated as reaching the internet. */
+  private fun isOnline(): Boolean {
+    val manager = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+    val network = manager.activeNetwork ?: return false
+    val capabilities = manager.getNetworkCapabilities(network) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+      capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
   }
 
   companion object {
