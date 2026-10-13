@@ -264,6 +264,18 @@ function App(): React.JSX.Element {
     setRoute('login');
   }, []);
 
+  // Logging out ends every session, unlike the background lock.
+  const logout = React.useCallback(async (): Promise<boolean> => {
+    const stopped = await sessionClient.stopAllTerminalSessions(nextSessionRequestId('logout'), 'user_stop');
+    if (stopped.kind !== 'applied') return false;
+    setPendingCompletion(undefined);
+    setProfileError(undefined);
+    setLockNotice(undefined);
+    void updateUnlockGrant('revoke');
+    setRoute(__DEV__ ? 'home' : 'login');
+    return true;
+  }, [sessionClient, setPendingCompletion]);
+
   const authenticated = route === 'home' || route === 'settings' || route === 'add-user' || route === 'github-account' || route === 'projects' || route === 'files' || route === 'terminal';
   useBackgroundSessionLock(!__DEV__ && profile !== null && authenticated, lockSession);
   useUnlockGrantAppState(!__DEV__ && profile !== null && authenticated);
@@ -609,7 +621,7 @@ function App(): React.JSX.Element {
     );
   }
   if (route === 'settings') {
-    return <SessionSettingsScreen onAddUser={() => setRoute('add-user')} onBack={() => setRoute('home')} users={profile?.users ?? []} />;
+    return <SessionSettingsScreen onAddUser={() => setRoute('add-user')} onBack={() => setRoute('home')} onLogout={logout} users={profile?.users ?? []} />;
   }
   if (route === 'add-user' && profile !== null) {
     return (

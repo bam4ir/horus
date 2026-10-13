@@ -28,6 +28,8 @@ type SessionSettingsScreenProps = Readonly<{
   users?: readonly ProfileUser[];
   /** Opens the flow that adds the user for the distribution without one. */
   onAddUser?: () => void;
+  /** Stops every running session and returns to sign in; false if the stop failed. */
+  onLogout?: () => Promise<boolean>;
   openUrl?: (url: string) => Promise<unknown>;
   readSettings?: () => Promise<SessionSettingsResult>;
   saveLimit?: (limit: number) => Promise<SessionSettingsResult>;
@@ -43,7 +45,7 @@ function limitLabel(limit: number): string {
   return limit === 1 ? '1 app' : `${limit} apps`;
 }
 
-export function SessionSettingsScreen({onBack, users = [], onAddUser, openUrl = url => Linking.openURL(url), readSettings = readSessionSettings, saveLimit = writeSessionLimit}: SessionSettingsScreenProps): React.JSX.Element {
+export function SessionSettingsScreen({onBack, users = [], onAddUser, onLogout, openUrl = url => Linking.openURL(url), readSettings = readSessionSettings, saveLimit = writeSessionLimit}: SessionSettingsScreenProps): React.JSX.Element {
   const [settings, setSettings] = React.useState<SessionSettings | undefined>();
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -154,6 +156,8 @@ export function SessionSettingsScreen({onBack, users = [], onAddUser, openUrl = 
             testID="settings-docs"
           />
         </SettingsSection>
+
+        {onLogout === undefined ? null : <LogoutSection onLogout={onLogout} />}
       </ScrollView>
     </ScreenShell>
   );
@@ -185,6 +189,51 @@ function UsersSection({users, onAddUser}: Readonly<{users: readonly ProfileUser[
           testID={`settings-add-${missing}`}
         />
       )}
+    </SettingsSection>
+  );
+}
+
+/** Log out takes a second tap, since it ends every running app and shell. */
+function LogoutSection({onLogout}: Readonly<{onLogout: () => Promise<boolean>}>): React.JSX.Element {
+  const [armed, setArmed] = React.useState(false);
+  const [stopping, setStopping] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  const mountedRef = React.useRef(true);
+  React.useEffect(() => () => { mountedRef.current = false; }, []);
+
+  const press = React.useCallback(async () => {
+    if (!armed) {
+      setArmed(true);
+      setFailed(false);
+      return;
+    }
+    setStopping(true);
+    const stopped = await onLogout();
+    if (!mountedRef.current) return;
+    setStopping(false);
+    setArmed(false);
+    setFailed(!stopped);
+  }, [armed, onLogout]);
+
+  return (
+    <SettingsSection
+      footer={failed ? 'Couldn’t stop every session. Try again.' : undefined}
+      footerTone="danger"
+      title="LOG OUT">
+      <SettingsRow
+        detail={armed ? 'Every running app and shell will be stopped.' : 'Stops all running apps and shells, then locks Horus.'}
+        label="Log out"
+        right={(
+          <SettingsAction
+            disabled={stopping}
+            label={stopping ? 'STOPPING…' : armed ? 'CONFIRM' : 'LOG OUT'}
+            onPress={() => { void press(); }}
+            testID="settings-logout"
+            tone="danger"
+          />
+        )}
+        testID="settings-logout-row"
+      />
     </SettingsSection>
   );
 }

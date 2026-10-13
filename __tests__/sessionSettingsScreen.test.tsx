@@ -83,4 +83,27 @@ describe('SessionSettingsScreen', () => {
     expect(renderer?.root.findByProps({testID: 'settings-user-debian'}).props.detail).toBe('Debian · /home/deb');
     await ReactTestRenderer.act(async () => { renderer?.unmount(); });
   });
+
+  test('logs out only on the second tap, and reports a failed stop', async () => {
+    const onLogout = jest.fn(async () => false);
+    let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<SessionSettingsScreen onBack={() => undefined} onLogout={onLogout} readSettings={async () => settings(1)} />);
+      await Promise.resolve();
+    });
+    const logout = () => renderer?.root.findByProps({testID: 'settings-logout'});
+    expect(logout()?.props.label).toBe('LOG OUT');
+    await ReactTestRenderer.act(async () => { logout()?.props.onPress(); });
+    expect(onLogout).not.toHaveBeenCalled();
+    expect(logout()?.props.label).toBe('CONFIRM');
+
+    await ReactTestRenderer.act(async () => {
+      logout()?.props.onPress();
+      await Promise.resolve();
+    });
+    expect(onLogout).toHaveBeenCalledTimes(1);
+    expect(logout()?.props.label).toBe('LOG OUT');
+    expect(renderer?.root.findAllByProps({children: 'Couldn’t stop every session. Try again.'}).length).toBeGreaterThan(0);
+    await ReactTestRenderer.act(async () => { renderer?.unmount(); });
+  });
 });
