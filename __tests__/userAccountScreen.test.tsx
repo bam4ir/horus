@@ -31,9 +31,7 @@ describe('UserAccountScreen', () => {
     expect(find('user-account-add-user')).toHaveLength(0);
     // The signed-in user is the card; the list holds the others.
     expect(find('user-account-user-alpine')).toHaveLength(0);
-    expect(find('user-account-user-debian')[0].props.detail).toBe('Debian · /home/deb');
-    // Changing users goes through log out, which stops every session.
-    expect(find('user-account-switch')).toHaveLength(0);
+    expect(find('user-account-user-debian')[0].props.accessibilityLabel).toBe('Switch to deb');
     await ReactTestRenderer.act(async () => { renderer.unmount(); });
   });
 
@@ -60,7 +58,7 @@ describe('UserAccountScreen', () => {
     const onUpdateUser = jest.fn(async () => ({kind: 'success'} as const));
     const {renderer, find} = await render(<UserAccountScreen onBack={() => undefined} onUpdateUser={onUpdateUser} user={ALPINE} users={[ALPINE, DEBIAN]} />);
     // The other user is listed but has no editor of its own.
-    expect(find('user-account-user-debian')[0].props.leading).toBeDefined();
+    expect(find('user-account-user-debian').length).toBeGreaterThan(0);
     await ReactTestRenderer.act(async () => { find('user-account-edit')[0].props.onPress(); });
     // One editor: the hieroglyphs and the name together.
     expect(find('account-avatars').length).toBeGreaterThan(0);
@@ -80,6 +78,24 @@ describe('UserAccountScreen', () => {
     });
     expect(onUpdateUser).toHaveBeenCalledWith({distro: 'alpine', username: 'ra', avatar: 'scarab'});
     expect(find('user-account-editor')).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
+
+  test('the whole card switches users on a second tap, since every session stops', async () => {
+    const onSwitchTo = jest.fn(async () => false);
+    const {renderer, find} = await render(<UserAccountScreen onBack={() => undefined} onSwitchTo={onSwitchTo} user={ALPINE} users={[ALPINE, DEBIAN]} />);
+    const card = () => find('user-account-user-debian')[0];
+    await ReactTestRenderer.act(async () => { card().props.onPress(); });
+    expect(onSwitchTo).not.toHaveBeenCalled();
+    expect(card().props.accessibilityLabel).toBe('Tap again to switch to deb');
+
+    await ReactTestRenderer.act(async () => {
+      card().props.onPress();
+      await Promise.resolve();
+    });
+    expect(onSwitchTo).toHaveBeenCalledWith(DEBIAN);
+    expect(card().props.accessibilityLabel).toBe('Switch to deb');
+    expect(renderer.root.findAllByProps({children: 'Couldn’t stop every session. Try again.'}).length).toBeGreaterThan(0);
     await ReactTestRenderer.act(async () => { renderer.unmount(); });
   });
 });

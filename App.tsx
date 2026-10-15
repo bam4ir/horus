@@ -276,12 +276,15 @@ function App(): React.JSX.Element {
   }, []);
 
   // Logging out ends every session, unlike the background lock.
-  const logout = React.useCallback(async (): Promise<boolean> => {
+  const [loginUser, setLoginUser] = React.useState<LinuxDistro | undefined>();
+  const logout = React.useCallback(async (next?: ProfileUser): Promise<boolean> => {
     const stopped = await sessionClient.stopAllTerminalSessions(nextSessionRequestId('logout'), 'user_stop');
     if (stopped.kind !== 'applied') return false;
     setPendingCompletion(undefined);
     setProfileError(undefined);
     setLockNotice(undefined);
+    // Switching to a user opens sign in on their password.
+    setLoginUser(next?.distro);
     void updateUnlockGrant('revoke');
     setRoute(__DEV__ ? 'home' : 'login');
     return true;
@@ -610,7 +613,7 @@ function App(): React.JSX.Element {
     return <LoadingScreen onDebugTerminal={__DEV__ ? openDebugTerminal : undefined} onImport={importDownloadedRootfs} onRetry={() => setRetryCount(value => value + 1)} status={bootState} detail={bootError} />;
   }
   if (!__DEV__ && route === 'login' && profile !== null) {
-    return <LoginScreen error={profileError} notice={lockNotice} onLogin={login} users={profile.users} />;
+    return <LoginScreen error={profileError} initialUser={loginUser} notice={lockNotice} onLogin={login} users={profile.users} />;
   }
   if ((profile === null && !__DEV__) || (!__DEV__ && route === 'onboarding')) {
     return <OnboardingScreen actions={onboardingActions} rootfsInstalled={runtimeReady} />;
@@ -640,7 +643,8 @@ function App(): React.JSX.Element {
       <UserAccountScreen
         onAddUser={() => setRoute('add-user')}
         onBack={() => setRoute('home')}
-        onLogout={logout}
+        onLogout={() => logout()}
+        onSwitchTo={next => logout(next)}
         onUpdateUser={async updated => {
           const result = await updateUserProfile(updated);
           if (result.kind === 'success') {

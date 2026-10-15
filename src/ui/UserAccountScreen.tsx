@@ -20,18 +20,41 @@ export type UserAccountScreenProps = Readonly<{
   onAddUser?: () => void;
   /** Stops every running session and returns to sign in; false if the stop failed. */
   onLogout?: () => Promise<boolean>;
+  /** Stops every running session, then opens sign in on [user]'s password; false if the stop failed. */
+  onSwitchTo?: (user: ProfileUser) => Promise<boolean>;
   /** Saves a new username or avatar for the signed-in user. */
   onUpdateUser?: (user: ProfileUser) => Promise<SaveProfileResult>;
 }>;
 
 /** Everything about Linux users, opened from the user card on the home screen. */
-export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onUpdateUser}: UserAccountScreenProps): React.JSX.Element {
+export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onSwitchTo, onUpdateUser}: UserAccountScreenProps): React.JSX.Element {
   const [editing, setEditing] = React.useState(false);
   // Back leaves the editor first, then the screen.
   // Back leaves the editor first, then the screen.
   useHardwareBack(true, editing ? () => setEditing(false) : onBack);
   const missing = LINUX_DISTROS.find(distro => !users.some(other => other.distro === distro));
   const others = users.filter(other => other.distro !== user.distro);
+  const [armed, setArmed] = React.useState<string | undefined>();
+  const [switching, setSwitching] = React.useState(false);
+  const [switchFailed, setSwitchFailed] = React.useState(false);
+  const mountedRef = React.useRef(true);
+  React.useEffect(() => () => { mountedRef.current = false; }, []);
+
+  // Like Log out, switching ends every session, so it takes a second tap.
+  const switchTo = React.useCallback(async (other: ProfileUser) => {
+    if (onSwitchTo === undefined || switching) return;
+    if (armed !== other.distro) {
+      setArmed(other.distro);
+      setSwitchFailed(false);
+      return;
+    }
+    setSwitching(true);
+    const stopped = await onSwitchTo(other);
+    if (!mountedRef.current) return;
+    setSwitching(false);
+    setArmed(undefined);
+    setSwitchFailed(!stopped);
+  }, [armed, onSwitchTo, switching]);
 
   return (
     <ScreenShell testID="user-account-screen">
@@ -73,18 +96,38 @@ export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onU
         )}
 
         <SettingsSection
-          footer={others.length > 0 ? 'To use another user, log out. That stops every running app and shell first.' : undefined}
+          footer={switchFailed ? 'Couldn’t stop every session. Try again.' : others.length > 0 ? 'Switching stops every running app and shell, then asks for that user’s password.' : undefined}
+          footerTone={switchFailed ? 'danger' : 'muted'}
           testID="user-account-users"
           title={others.length > 0 ? 'OTHER USERS' : 'USERS'}>
-          {others.map(other => (
-            <SettingsRow
-              key={other.distro}
-              detail={`${DISTRO_NAMES[other.distro]} · /home/${other.username}`}
-              label={other.username}
-              leading={<ProfileAvatar avatar={other.avatar} size={36} />}
-              testID={`user-account-user-${other.distro}`}
-            />
-          ))}
+          {others.map(other => {
+            const confirming = armed === other.distro;
+            return (
+              <Pressable
+                key={other.distro}
+                accessibilityHint="Stops every running app and shell first"
+                accessibilityLabel={confirming ? `Tap again to switch to ${other.username}` : `Switch to ${other.username}`}
+                accessibilityRole="button"
+                disabled={onSwitchTo === undefined || switching}
+                focusable={false}
+                onPress={() => { void switchTo(other); }}
+                style={styles.other}
+                testID={`user-account-user-${other.distro}`}>
+                <ProfileAvatar avatar={other.avatar} size={40} />
+                <View style={styles.otherCopy}>
+                  <Text numberOfLines={1} style={styles.otherName}>{other.username}</Text>
+                  <Text numberOfLines={2} style={[styles.otherDetail, confirming && styles.otherWarning]}>
+                    {confirming ? 'Tap again. Every app and shell stops.' : `${DISTRO_NAMES[other.distro]} · /home/${other.username}`}
+                  </Text>
+                </View>
+                {onSwitchTo === undefined ? null : (
+                  <Text style={[styles.switchLabel, confirming && styles.switchConfirm]}>
+                    {switching && confirming ? 'SWITCHING…' : confirming ? 'CONFIRM' : 'SWITCH ›'}
+                  </Text>
+                )}
+              </Pressable>
+            );
+          })}
           {missing === undefined || onAddUser === undefined ? null : (
             <SettingsRow
               detail={missing === 'debian' ? 'glibc and apt, for tools Alpine can’t run. Experimental.' : 'Small and fast, with musl and apk.'}
@@ -227,6 +270,13 @@ const styles = StyleSheet.create({
   save: {alignItems: 'center', backgroundColor: uiColors.accent, borderRadius: 8, flex: 1, justifyContent: 'center', minHeight: 44},
   saveIdle: {opacity: 0.4},
   saveText: {color: uiColors.background, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '900', letterSpacing: 0.6},
+  other: {alignItems: 'center', flexDirection: 'row', gap: 12, minHeight: 64, paddingHorizontal: 14, paddingVertical: 12},
+  otherCopy: {flex: 1, minWidth: 0},
+  otherName: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 13, fontWeight: '700'},
+  otherDetail: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, marginTop: 3},
+  otherWarning: {color: uiColors.warning},
+  switchLabel: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', letterSpacing: 0.6},
+  switchConfirm: {color: uiColors.warning},
   logout: {marginTop: 22},
   logoutGroup: {backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, overflow: 'hidden'},
   logoutRow: {alignItems: 'center', justifyContent: 'center', minHeight: 52},

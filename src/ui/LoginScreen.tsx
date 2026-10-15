@@ -1,6 +1,6 @@
 import React from 'react';
 import {Animated, BackHandler, StyleSheet, Text, TextInput, View} from 'react-native';
-import {DISTRO_NAMES, type ProfileUser} from '../profile/profileStore';
+import {DISTRO_NAMES, type LinuxDistro, type ProfileUser} from '../profile/profileStore';
 import {AuthScreenLayout, authStyles} from './AuthScreenLayout';
 import {uiColors} from './brand';
 import {InteractivePressable as Pressable} from './InteractivePressable';
@@ -13,6 +13,8 @@ export type LoginScreenProps = Readonly<{
   onLogin: (user: ProfileUser, password: string) => Promise<void>;
   error?: string;
   notice?: string;
+  /** Opens straight on this user's password, e.g. after "Switch to" on Account. */
+  initialUser?: LinuxDistro;
 }>;
 
 /**
@@ -21,9 +23,9 @@ export type LoginScreenProps = Readonly<{
  * "Switch user" goes back. A single user goes straight to the password.
  * Signing in also switches new sessions to that user's distribution.
  */
-export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): React.JSX.Element {
+export function LoginScreen({users, onLogin, error, notice, initialUser}: LoginScreenProps): React.JSX.Element {
   const single = users.length === 1;
-  const [picked, setPicked] = React.useState<ProfileUser | undefined>();
+  const [picked, setPicked] = React.useState<ProfileUser | undefined>(() => users.find(user => user.distro === initialUser));
   // One user skips the list and the brand entirely, even if users load late.
   const selected = single ? users[0] : picked;
   const [password, setPassword] = React.useState('');

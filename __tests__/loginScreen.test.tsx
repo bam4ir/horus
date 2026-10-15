@@ -75,4 +75,14 @@ describe('LoginScreen', () => {
     expect(logins).toEqual([[DEBIAN_USER, 'debian pass']]);
     await ReactTestRenderer.act(async () => { renderer.unmount(); });
   });
+
+  test('opens on the password of the user Account switched to', async () => {
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<LoginScreen initialUser="debian" onLogin={async () => undefined} users={[ALPINE_USER, DEBIAN_USER]} />);
+    });
+    expect(renderer.root.findAllByProps({testID: 'login-user-debian-selected'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'login-back'}).length).toBeGreaterThan(0);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
 });
