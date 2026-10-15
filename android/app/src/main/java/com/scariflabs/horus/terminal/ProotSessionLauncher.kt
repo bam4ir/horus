@@ -193,8 +193,13 @@ class ProotSessionLauncher(
     guestGid: Int = GUEST_GID,
     port: Int = RemoteAccess.PORT,
     harnessHomes: List<HarnessHome> = emptyList(),
+    /** App-private directory holding the phone's one host key; null keeps it in the user's home. */
+    hostKeyDir: File? = null,
   ): LaunchSpec {
     require(guestUsername != GUEST_ROOT_USER) { "remote access needs a non-root profile user" }
+    require(hostKeyDir == null || (hostKeyDir.isDirectory && !Files.isSymbolicLink(hostKeyDir.toPath()))) {
+      "remote access host key directory is unavailable"
+    }
     require(port in 1025..65535) { "remote access port is invalid" }
     requireHarnessHomes(harnessHomes, guestUsername)
     installRootHelper(rootfsDir)
@@ -216,6 +221,7 @@ class ProotSessionLauncher(
         guestUid.toString(),
         guestGid.toString(),
         port.toString(),
+        if (hostKeyDir == null) "" else RemoteAccess.GUEST_HOST_KEY_DIR,
       ),
       forceRootIdentity = true,
       // Root's own /root stays the rootfs directory, so logins see their
@@ -225,7 +231,8 @@ class ProotSessionLauncher(
       extraDeviceBinds = ptyDeviceBinds(),
       // The app's harness homes, where its sessions see them, so `codex`
       // and friends over SSH run the app's installs with its logins.
-      extraBinds = harnessHomes.map { it.hostDir to "/home/${it.username}" },
+      extraBinds = harnessHomes.map { it.hostDir to "/home/${it.username}" } +
+        listOfNotNull(hostKeyDir?.let { it to RemoteAccess.GUEST_HOST_KEY_DIR }),
     )
   }
 
@@ -2033,7 +2040,9 @@ EOF
         mkdir -p /usr/lib/ssh
         ln -s /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server
       fi
-      keydir="${'$'}home/.config/horus"
+      # The app binds the phone's one host key here; without it, 1.0.4's
+      # per-home key.
+      keydir="${'$'}{5:-${'$'}home/.config/horus}"
       hostkey="${'$'}keydir/ssh_host_ed25519_key"
       mkdir -p "${'$'}keydir" "${'$'}home/.ssh" "${'$'}home/.cache/horus"
       if [ ! -s "${'$'}hostkey" ]; then
@@ -2065,6 +2074,9 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
       # A script loses dropbear's "-" login marker in ${'$'}0; an interactive
       # login is the call without arguments (commands arrive as -c ...).
       if [ "${'$'}#" -eq 0 ]; then
+        # The host key no longer changes with the user, so say who this is.
+        horus_os=${'$'}(. /etc/os-release 2>/dev/null && printf '%s' "${'$'}PRETTY_NAME")
+        printf 'Horus: %s on %s\n' "${'$'}(id -un)" "${'$'}{horus_os:-Linux}" >&2
         if command -v zsh >/dev/null 2>&1; then exec zsh -l; fi
         exec /bin/sh -l
       fi

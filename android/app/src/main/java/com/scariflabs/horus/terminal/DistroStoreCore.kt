@@ -389,6 +389,7 @@ class DistroStoreCore(
       deleteTreeIfPresent(paths.home)
       deleteTreeIfPresent(paths.harnessHomes)
       deleteTreeIfPresent(paths.distroHomes)
+      RemoteAccess.Store(paths.base).deleteHostKey()
       if (!paths.home.mkdirs() && !paths.home.isDirectory) throw IOException("cannot recreate home")
       if (!paths.harnessHomes.mkdirs() && !paths.harnessHomes.isDirectory) {
         throw IOException("cannot recreate harness homes")

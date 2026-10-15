@@ -1478,7 +1478,7 @@ class ProotSessionLauncherTest {
       }
 
       val remote = launcher.remoteAccessLaunchSpec(rootfs, home, workspaceDir = null, guestUsername = "nefer").argv
-      assertTrue(remote[remote.size - 6].contains("${ProotSessionLauncher.GUEST_ROOT_HELPER_PATH} /run/horus-sudo/ssh"))
+      assertTrue(remote[remote.indexOf("horus-remote-access") - 1].contains("${ProotSessionLauncher.GUEST_ROOT_HELPER_PATH} /run/horus-sudo/ssh"))
 
       // A stale copy is replaced; a symlink planted on the way is never followed.
       sudo.writeText("old")
@@ -1512,7 +1512,7 @@ class ProotSessionLauncherTest {
         null,
         "luna",
       )
-      val script = launch.argv.takeLast(8)[2]
+      val script = launch.argv[launch.argv.indexOf("horus-remote-access") - 1]
       val lines = script.lines()
       val followingCommands = mapOf(
         "HORUS_SHELL" to listOf("chmod 755 \"\$login_shell.tmp\"", "mv -f \"\$login_shell.tmp\" \"\$login_shell\""),

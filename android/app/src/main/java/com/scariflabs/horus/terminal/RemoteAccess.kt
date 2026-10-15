@@ -26,6 +26,10 @@ object RemoteAccess {
   private const val MAX_KEY_BLOB_BYTES = 1_100
   private const val MAX_AUTHORIZED_KEYS_BYTES = 64 * 1024L
   private const val MAX_KEYS = 32
+  private const val MAX_HOST_KEY_BYTES = 4096L
+  const val HOST_KEY_NAME = "ssh_host_ed25519_key"
+  /** Where the SSH server's PRoot sees the host key directory; no other session binds it. */
+  const val GUEST_HOST_KEY_DIR = "/run/horus-hostkey"
   private val LABEL_PATTERN = Regex("[A-Za-z0-9._@-]{1,64}")
   private val ALLOWED_KEY_TYPES = setOf(
     "ssh-ed25519",
@@ -123,6 +127,8 @@ object RemoteAccess {
     private val enabledFile = File(dir, "enabled")
     private val statusFile = File(dir, "status")
     val logFile = File(dir, "server.log")
+    private val hostKeyDir = File(dir, "hostkey")
+    private val hostKey = File(hostKeyDir, HOST_KEY_NAME)
     /** Written by dropbear itself, in the home of the user it runs as; survives the service being killed. */
     val serverPidFiles = paths.userHomes().map { File(it, ".cache/horus/dropbear.pid") }
 
@@ -204,6 +210,49 @@ object RemoteAccess {
         mirror.setExecutable(false, false); mirror.setExecutable(true, true)
         atomicWrite(File(mirror, "authorized_keys"), content)
       }
+    }
+
+    /**
+     * The phone's one SSH host key, kept outside every guest home so the
+     * computer sees the same identity whichever user is active, and only the
+     * SSH server's PRoot can read it. Returns the directory to bind.
+     *
+     * Horus 1.0.4 kept a key per user home. The first start adopts the
+     * active user's, so computers paired with that user see no change, then
+     * removes every per-home copy.
+     */
+    fun prepareHostKey(activeHome: File): File = synchronized(lock) {
+      if (Files.isSymbolicLink(hostKeyDir.toPath()) || Files.isSymbolicLink(hostKey.toPath())) {
+        throw IllegalStateException("host key path is a symbolic link")
+      }
+      if (!hostKeyDir.isDirectory && !hostKeyDir.mkdirs()) throw IllegalStateException("cannot create host key directory")
+      if (!hostKey.isFile || hostKey.length() == 0L) {
+        val legacy = legacyHostKey(activeHome)
+        if (legacy != null && legacy.isFile && legacy.length() in 1..MAX_HOST_KEY_BYTES) {
+          val temp = File(hostKeyDir, ".${hostKey.name}.tmp")
+          temp.delete()
+          legacy.copyTo(temp)
+          temp.setReadable(false, false); temp.setReadable(true, true)
+          temp.setWritable(false, false); temp.setWritable(true, true)
+          Files.move(temp.toPath(), hostKey.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        }
+      }
+      // A key the server will not use should not sit where agents read it.
+      (paths.userHomes() + activeHome).distinct().mapNotNull(::legacyHostKey).forEach { it.delete() }
+      hostKeyDir
+    }
+
+    /** A home reset gives the phone a new identity, as it did when the key lived there. */
+    fun deleteHostKey() = synchronized(lock) {
+      hostKeyDir.listFiles()?.forEach(File::delete)
+    }
+
+    /** The 1.0.4 location, when it is a plain file and nothing on the way is a link. */
+    private fun legacyHostKey(home: File): File? {
+      val config = File(home, ".config")
+      val dir = File(config, "horus")
+      val key = File(dir, HOST_KEY_NAME)
+      return key.takeIf { listOf(home, config, dir, key).none { Files.isSymbolicLink(it.toPath()) } && it.exists() }
     }
 
     /** Copies the paired keys into a user home created after they were added. */

@@ -228,7 +228,10 @@ class TerminalSessionSpecFactory(
       )
       val guestHomeDir = activeGuestHome(null)
       // The active user's home may postdate the pairing; give it the paired keys.
-      RemoteAccess.Store(paths.base).syncKeysToHomes()
+      val remoteStore = RemoteAccess.Store(paths.base)
+      remoteStore.syncKeysToHomes()
+      // One host key for the phone, whichever user is active.
+      val hostKeyDir = remoteStore.prepareHostKey(guestHomeDir)
       // The app's harnesses, so SSH runs the same installs and logins.
       val harnessHomes = existingHarnessHomes(profileUsername)
       RemoteAccessBuildOutcome.Success(
@@ -238,6 +241,7 @@ class TerminalSessionSpecFactory(
           workspaceDir = paths.defaultWorkspace,
           guestUsername = profileUsername,
           harnessHomes = harnessHomes,
+          hostKeyDir = hostKeyDir,
         ),
       )
     } catch (error: Exception) {

@@ -193,8 +193,8 @@ class RemoteAccessTest {
       assertFalse("home must not also appear as /root", binds.contains("${home.canonicalPath}:/root"))
       assertTrue(binds.contains("${File(hostDev, "ptmx").absolutePath}:/dev/ptmx"))
       assertTrue(binds.contains("${File(hostDev, "pts").absolutePath}:/dev/pts"))
-      assertEquals(listOf("horus-remote-access", "horus", "1000", "1000", "8022"), launch.argv.takeLast(5))
-      val script = launch.argv[launch.argv.size - 6]
+      assertEquals(listOf("horus-remote-access", "horus", "1000", "1000", "8022", ""), launch.argv.takeLast(6))
+      val script = launch.argv[launch.argv.indexOf("horus-remote-access") - 1]
       assertTrue(script.contains(ProotSessionLauncher.DOTNET_ENV_SCRIPT))
       assertTrue(script.contains(ProotSessionLauncher.ZSH_EXIT_SCRIPT))
       for (terminator in listOf("HORUS_SHELL", "HORUS_INSTALLER", "HORUS_ZSH")) {
@@ -224,6 +224,61 @@ class RemoteAccessTest {
         ProotSessionLauncher(runtime, File(base, "scratch"), hostProc, hostDev)
           .remoteAccessLaunchSpec(rootfs, home, workspace, ProotSessionLauncher.GUEST_ROOT_USER)
       }
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun onePhoneHostKeyAdoptsTheActiveUsersKeyAndOnlyTheServerSeesIt() {
+    val base = Files.createTempDirectory("horus-host-key").toFile()
+    try {
+      val paths = DistroStorePaths(base)
+      val alpine = paths.homeFor(RootfsCatalog.DISTRO_ALPINE)
+      val debian = paths.homeFor(RootfsCatalog.DISTRO_DEBIAN)
+      fun legacy(home: File) = File(home, ".config/horus/${RemoteAccess.HOST_KEY_NAME}")
+      legacy(alpine).apply { parentFile!!.mkdirs(); writeText("alpine key") }
+      legacy(debian).apply { parentFile!!.mkdirs(); writeText("debian key") }
+      val store = RemoteAccess.Store(base)
+
+      // Computers paired while Debian was active keep trusting the phone.
+      val dir = store.prepareHostKey(debian)
+      val shared = File(dir, RemoteAccess.HOST_KEY_NAME)
+      assertEquals("debian key", shared.readText())
+      assertFalse(legacy(alpine).exists())
+      assertFalse(legacy(debian).exists())
+      assertFalse(dir.canonicalPath.startsWith(alpine.canonicalPath))
+
+      // Switching users keeps the identity; a key a guest plants is removed, not adopted.
+      legacy(alpine).writeText("planted")
+      assertEquals(dir, store.prepareHostKey(alpine))
+      assertEquals("debian key", shared.readText())
+      assertFalse(legacy(alpine).exists())
+
+      // A home reset gives the phone a new identity.
+      store.deleteHostKey()
+      assertFalse(shared.exists())
+
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("cpu 1\n")
+      File(hostProc, "loadavg").writeText("0 0 0\n")
+      val hostDev = File(base, "dev").apply { mkdirs() }
+      listOf("null", "zero", "random", "urandom", "tty", "ptmx").forEach { File(hostDev, it).writeText("") }
+      File(hostDev, "pts").mkdirs()
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val runtime = ProotRuntimeLocator.LocatedRuntime(
+        prootBin = File(base, "libproot.so"),
+        loaderBin = File(base, "libproot_loader.so"),
+        libraryDir = base,
+        prootVersion = "5.4.0",
+      )
+      val launcher = ProotSessionLauncher(runtime, File(base, "scratch"), hostProc, hostDev)
+      val remote = launcher.remoteAccessLaunchSpec(rootfs, alpine, null, "horus", hostKeyDir = dir).argv
+      assertEquals(RemoteAccess.GUEST_HOST_KEY_DIR, remote.last())
+      assertTrue(remote.windowed(2).any { it == listOf("-b", "${dir.canonicalPath}:${RemoteAccess.GUEST_HOST_KEY_DIR}") })
+      val shell = launcher.interactiveShellLaunchSpec(rootfs, alpine).argv
+      assertFalse(shell.any { it.contains(RemoteAccess.GUEST_HOST_KEY_DIR) })
     } finally {
       base.deleteRecursively()
     }

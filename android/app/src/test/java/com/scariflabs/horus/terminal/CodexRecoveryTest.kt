@@ -109,7 +109,7 @@ class CodexRecoveryTest {
     val launcher = ProotSessionLauncher(ProotRuntimeLocator.LocatedRuntime(
       File(temp.root, "proot"), File(temp.root, "loader"), temp.root, "5.4.0"), File(temp.root, "scratch"))
     val rootfs = File(temp.root, "rootfs").apply { mkdirs(); File(this, "etc").mkdirs() }
-    val remote = launcher.remoteAccessLaunchSpec(rootfs, home, null, "horus").argv.takeLast(8)[2]
+    val remote = launcher.remoteAccessLaunchSpec(rootfs, home, null, "horus").argv.let { it[it.indexOf("horus-remote-access") - 1] }
     val installer = remote.substringAfter("<<'HORUS_INSTALLER'\n").substringBefore("\nHORUS_INSTALLER")
       .replace("/usr/bin/node", node.absolutePath)
     executable(File(home, ".local/bin/codex"), "#!/bin/sh\nprintf 'launched:%s\\n' \"${'$'}1\"\n")
