@@ -94,7 +94,7 @@ export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): 
               onPress={() => choose(user)}
               style={styles.user}
               testID={`login-user-${user.distro}`}>
-              <ProfileAvatar avatar={user.avatar} size={96} />
+              <ProfileAvatar avatar={user.avatar} size={76} />
               <Text numberOfLines={1} style={styles.listName}>{user.username}</Text>
               <Text style={styles.distro}>{DISTRO_NAMES[user.distro]}</Text>
             </Pressable>
@@ -106,10 +106,11 @@ export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): 
   }
 
   const canSubmit = !saving && password.length > 0;
+  // Like the Mac, the chosen user replaces the brand as the focus.
   return (
-    <AuthScreenLayout brandTestID="login" screenTestID="login-screen">
+    <AuthScreenLayout brandTestID="login" screenTestID="login-screen" showBrand={false}>
       <View style={styles.chosen}>
-        <ProfileAvatar avatar={selected.avatar} selected size={120} testID={`login-user-${selected.distro}-selected`} />
+        <ProfileAvatar avatar={selected.avatar} selected size={96} testID={`login-user-${selected.distro}-selected`} />
         <Text numberOfLines={1} style={styles.name}>{selected.username}</Text>
         <Text style={[styles.distro, styles.distroChosen]}>{DISTRO_NAMES[selected.distro]}</Text>
         <Animated.View style={[styles.field, {transform: [{translateX: shake}]}]}>
@@ -152,21 +153,25 @@ export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): 
   );
 }
 
+// Hierarchy: in the list the Horus mark (112) leads and avatars (76) follow.
+// Once a user is chosen the brand hides and their avatar (96) leads, then
+// name, then distribution as a caption.
+// Spacing steps in 8s: 8 inside a group, 16 between groups, 24 for actions.
 const styles = StyleSheet.create({
-  users: {flexDirection: 'row', flexWrap: 'wrap', gap: 28, justifyContent: 'center', marginTop: 12},
-  user: {alignItems: 'center', borderRadius: 16, maxWidth: 150, padding: 8},
-  listName: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 15, fontWeight: '700', marginTop: 12},
-  distro: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 11, marginTop: 3},
-  chosen: {alignItems: 'center', alignSelf: 'center', maxWidth: 360, width: '100%'},
-  name: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 19, fontWeight: '800', marginTop: 14},
+  users: {flexDirection: 'row', flexWrap: 'wrap', gap: 24, justifyContent: 'center'},
+  user: {alignItems: 'center', borderRadius: 16, maxWidth: 140, padding: 8},
+  listName: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 14, fontWeight: '700', marginTop: 8},
+  distro: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, letterSpacing: 0.8, marginTop: 2, textTransform: 'uppercase'},
+  chosen: {alignItems: 'center', alignSelf: 'center', maxWidth: 340, width: '100%'},
+  name: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 16, fontWeight: '800', marginTop: 8},
   distroChosen: {color: uiColors.accent},
-  field: {alignItems: 'center', alignSelf: 'stretch', backgroundColor: uiColors.panelRaised, borderColor: uiColors.borderSoft, borderRadius: 26, borderWidth: 1, flexDirection: 'row', marginTop: 22, minHeight: 52, paddingLeft: 18, paddingRight: 6},
-  input: {color: uiColors.ink, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 14, minHeight: 50, padding: 0},
+  field: {alignItems: 'center', alignSelf: 'stretch', backgroundColor: uiColors.panelRaised, borderColor: uiColors.borderSoft, borderRadius: 24, borderWidth: 1, flexDirection: 'row', marginTop: 24, minHeight: 48, paddingLeft: 16, paddingRight: 4},
+  input: {color: uiColors.ink, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 14, minHeight: 46, padding: 0},
   go: {alignItems: 'center', backgroundColor: uiColors.accent, borderRadius: 20, height: 40, justifyContent: 'center', width: 40},
   goIdle: {backgroundColor: 'transparent', borderColor: uiColors.borderSoft, borderWidth: 1},
   goText: {color: uiColors.background, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '900', includeFontPadding: false},
   goTextIdle: {color: uiColors.muted},
-  centered: {textAlign: 'center'},
-  back: {marginTop: 26, paddingHorizontal: 16, paddingVertical: 10},
-  backText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 13, fontWeight: '700'},
+  centered: {alignSelf: 'stretch', marginTop: 8, textAlign: 'center'},
+  back: {marginTop: 16, paddingHorizontal: 16, paddingVertical: 8},
+  backText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 12, fontWeight: '700'},
 });

@@ -31,8 +31,8 @@ describe('LoginScreen', () => {
   test('signs the only user in with their password', async () => {
     const {renderer, logins, press, type, has} = await render([ALPINE_USER]);
 
-    expect(renderer.root.findByProps({testID: 'login-logo'}).props.style).toMatchObject({height: 112, width: 112});
-    expect(renderer.root.findByProps({testID: 'login-wordmark'}).props.children).toBe('HORUS');
+    // The chosen user is the focus; the brand shows only with the user list.
+    expect(has('login-logo')).toBe(false);
     expect(has('login-user-alpine-selected')).toBe(true);
     expect(renderer.root.findByProps({testID: 'login-password'}).props.placeholder).toBe('Enter Password');
     // One user has nobody to switch to.
@@ -53,8 +53,11 @@ describe('LoginScreen', () => {
     expect(has('login-user-alpine')).toBe(true);
     expect(has('login-user-debian')).toBe(true);
     expect(has('login-password')).toBe(false);
+    expect(renderer.root.findByProps({testID: 'login-logo'}).props.style).toMatchObject({height: 112, width: 112});
+    expect(renderer.root.findByProps({testID: 'login-wordmark'}).props.children).toBe('HORUS');
 
     await press('login-user-alpine');
+    expect(has('login-logo')).toBe(false);
     expect(has('login-user-alpine-selected')).toBe(true);
     expect(has('login-user-debian')).toBe(false);
     await type('typed for alpine');
