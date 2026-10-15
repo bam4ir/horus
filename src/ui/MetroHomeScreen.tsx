@@ -31,6 +31,8 @@ export type MetroHomeScreenProps = Readonly<{
   /** Who is signed in, so it is clear whose Linux the sessions run in. */
   user?: ProfileUser;
   onOpenUser?: () => void;
+  /** Shown once after upgrading from a Horus without Linux users. */
+  accountIntro?: Readonly<{onOpen: () => void; onDismiss: () => void}>;
   onOpen: (target: MetroLaunchTarget) => void;
   onOpenGithubLogin: () => void;
   onOpenGithubAccount?: () => void;
@@ -79,7 +81,7 @@ function AppTile({icon, logo, title, detail, onPress}: AppTileProps): React.JSX.
   );
 }
 
-export function MetroHomeScreen({githubAccount, user, onOpenUser, onOpen, onOpenGithubLogin, onOpenGithubAccount, onOpenSettings, loadRecentSessions, onResumeSession, onTerminateSession}: MetroHomeScreenProps): React.JSX.Element {
+export function MetroHomeScreen({githubAccount, user, onOpenUser, accountIntro, onOpen, onOpenGithubLogin, onOpenGithubAccount, onOpenSettings, loadRecentSessions, onResumeSession, onTerminateSession}: MetroHomeScreenProps): React.JSX.Element {
   const [snapshot, setSnapshot] = React.useState<DeviceSnapshot | null>(null);
   const [recentSessions, setRecentSessions] = React.useState<readonly ActiveTerminalSession[]>([]);
   const [terminatingSessions, setTerminatingSessions] = React.useState<ReadonlySet<string>>(() => new Set());
@@ -170,6 +172,26 @@ export function MetroHomeScreen({githubAccount, user, onOpenUser, onOpen, onOpen
             </Pressable>
           )}
         />
+
+        {accountIntro === undefined || user === undefined ? null : (
+          <View style={styles.intro} testID="metro-account-intro">
+            <View style={styles.introHead}>
+              <ProfileAvatar avatar={user.avatar} selected size={40} />
+              <Text style={styles.introTitle}>Make Horus yours</Text>
+            </View>
+            <Text style={styles.introBody}>
+              Horus now has Linux users. You’re signed in as {user.username}. Pick your own name and picture, or add a Debian user for tools Alpine can’t run.
+            </Text>
+            <View style={styles.introActions}>
+              <Pressable accessibilityRole="button" onPress={accountIntro.onDismiss} style={styles.introLater} testID="metro-account-intro-dismiss">
+                <Text style={styles.introLaterText}>NOT NOW</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" onPress={accountIntro.onOpen} style={styles.introOpen} testID="metro-account-intro-open">
+                <Text style={styles.introOpenText}>OPEN ACCOUNT</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
 
         <View style={styles.menuPanel} testID="metro-menu">
           <View style={styles.identityRow}>
@@ -300,6 +322,15 @@ export function MetroHomeScreen({githubAccount, user, onOpenUser, onOpen, onOpen
 
 const styles = StyleSheet.create({
   content: {paddingHorizontal: 18, paddingBottom: 20},
+  intro: {backgroundColor: uiColors.accentSurface, borderColor: uiColors.accent, borderRadius: 14, borderWidth: 1, marginBottom: 12, padding: 14},
+  introHead: {alignItems: 'center', flexDirection: 'row', gap: 12},
+  introTitle: {color: uiColors.ink, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 15, fontWeight: '800'},
+  introBody: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 10},
+  introActions: {flexDirection: 'row', gap: 8, marginTop: 14},
+  introLater: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 40},
+  introLaterText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', letterSpacing: 0.6},
+  introOpen: {alignItems: 'center', backgroundColor: uiColors.accent, borderRadius: 8, flex: 1, justifyContent: 'center', minHeight: 40},
+  introOpenText: {color: uiColors.inset, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '900', letterSpacing: 0.6},
   menuPanel: {backgroundColor: uiColors.background, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, marginTop: 0, padding: 10},
   activeSessionsPanel: {backgroundColor: uiColors.background, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, marginTop: 12, padding: 10},
   panelSectionLabel: {marginTop: 0},

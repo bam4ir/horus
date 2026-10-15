@@ -56,6 +56,18 @@ class ProfileUsersCore(
 
   fun isConfigured(): Boolean = DISTROS.any(::hasVerifier)
 
+  /**
+   * True for an install from before Linux users: Alpine has a password but
+   * no stored username, so it silently became [DEFAULT_USERNAME]. Home
+   * points such a user at Account once; editing or dismissing ends it.
+   */
+  fun needsAccountIntro(): Boolean =
+    hasVerifier(RootfsCatalog.DISTRO_ALPINE) &&
+      store.string(usernameKey(RootfsCatalog.DISTRO_ALPINE)) == null &&
+      store.int(KEY_ACCOUNT_INTRO_SEEN, 0) == 0
+
+  fun dismissAccountIntro() = store.commit(mapOf(KEY_ACCOUNT_INTRO_SEEN to 1))
+
   /** Adds the user for [distro]. Never replaces an existing one, or the lock could be reset without its password. */
   @Synchronized
   fun create(distro: String, username: String, avatar: String, password: String): CreateResult {
@@ -169,6 +181,7 @@ class ProfileUsersCore(
     const val KEY_LEGACY_USERNAME = "username"
     const val KEY_LEGACY_EMOJI = "emoji"
     const val KEY_HAS_PASSWORD = "has_password"
+    private const val KEY_ACCOUNT_INTRO_SEEN = "account_intro_seen"
     const val KEY_PASSWORD_SALT = "password_salt"
     const val KEY_PASSWORD_VERIFIER = "password_verifier"
     private const val KEY_PASSWORD_ITERATIONS = "password_iterations"

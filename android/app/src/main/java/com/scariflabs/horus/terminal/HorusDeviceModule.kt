@@ -68,10 +68,12 @@ class HorusDeviceModule(
   /** The configured users, at most one per distribution. */
   @ReactMethod
   fun getProfile(promise: Promise) {
-    val users = PasswordGate.users(appContext).users()
+    val core = PasswordGate.users(appContext)
+    val users = core.users()
     promise.resolve(
       Arguments.createMap().apply {
         putBoolean("configured", users.isNotEmpty())
+        putBoolean("accountIntro", core.needsAccountIntro())
         if (users.isNotEmpty()) putBoolean("hasPassword", true)
         putArray(
           "users",
@@ -89,6 +91,13 @@ class HorusDeviceModule(
         )
       },
     )
+  }
+
+  /** The upgrade card on Home was opened or closed; never show it again. */
+  @ReactMethod
+  fun dismissAccountIntro(promise: Promise) {
+    runCatching { PasswordGate.users(appContext).dismissAccountIntro() }
+    promise.resolve(null)
   }
 
   /** Adds the user for one distribution. Never replaces an existing user, or its lock could be reset without the password. */

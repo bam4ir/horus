@@ -70,6 +70,22 @@ class ProfileUsersCoreTest {
   }
 
   @Test
+  fun `only an upgrade from before users is pointed at account, once`() {
+    assertFalse(users.needsAccountIntro())
+    // What 1.0.4 left: an Alpine password and no username.
+    values.values["password_salt"] = "c2FsdHNhbHRzYWx0c2FsdA=="
+    values.values["password_verifier"] = "dmVyaWZpZXI="
+    assertTrue(users.needsAccountIntro())
+    users.dismissAccountIntro()
+    assertFalse(users.needsAccountIntro())
+
+    // A user who chose a name at onboarding never sees it.
+    val fresh = ProfileUsersCore(MapValues(), clock = { now }, iterations = 50_000)
+    assertEquals(ProfileUsersCore.CreateResult.CREATED, fresh.create(alpine, "ra", "falcon", "secret"))
+    assertFalse(fresh.needsAccountIntro())
+  }
+
+  @Test
   fun `the signed-in user can change name and avatar and keeps their password`() {
     assertEquals(ProfileUsersCore.UpdateResult.NOT_FOUND, users.update(debian, "deb", "ibis"))
     assertEquals(ProfileUsersCore.CreateResult.CREATED, users.create(debian, "deb", "ibis", "secret"))

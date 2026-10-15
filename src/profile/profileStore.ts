@@ -20,6 +20,8 @@ export type ProfileUser = Readonly<{
 export type UserProfile = Readonly<{
   /** Configured users, Alpine first. Never empty. */
   users: readonly ProfileUser[];
+  /** An upgrade from before Linux users that has not seen Account yet. */
+  accountIntro?: boolean;
 }>;
 
 export type NewProfileUser = ProfileUser & Readonly<{password: string}>;
@@ -33,6 +35,7 @@ type NativeProfileModule = Readonly<{
   saveProfile: (request: {distro: string; username: string; avatar: string; password: string}) => Promise<unknown>;
   verifyPassword: (request: {distro: string; password: string}) => Promise<unknown>;
   updateProfile: (request: {distro: string; username: string; avatar: string}) => Promise<unknown>;
+  dismissAccountIntro: () => Promise<unknown>;
 }>;
 
 function nativeProfileModule(): NativeProfileModule | null {
@@ -95,9 +98,18 @@ export async function readUserProfile(): Promise<UserProfile | null> {
     const users = response.users.filter(isProfileUser);
     const distros = new Set(users.map(user => user.distro));
     if (users.length === 0 || users.length !== response.users.length || distros.size !== users.length) return null;
-    return {users};
+    return response.accountIntro === true ? {users, accountIntro: true} : {users};
   } catch {
     return null;
+  }
+}
+
+/** The Home card that points an upgraded user at Account; shown once. */
+export async function dismissAccountIntro(): Promise<void> {
+  try {
+    await nativeProfileModule()?.dismissAccountIntro();
+  } catch {
+    // Shown again next time; harmless.
   }
 }
 

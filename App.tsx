@@ -12,7 +12,7 @@ import {clearStoredGithubAccount, readStoredGithubAccount, saveGithubAccount} fr
 import {GITHUB_AUTH_LOGIN_COMMAND, openGithubDeviceLoginUrl} from './src/projects/githubDeviceLogin';
 import type {ProjectSummary} from './src/projects/projectTypes';
 import {WORKSPACE_PROJECTS_DIRECTORY, buildProjectCloneCommand, harnessSessionTarget, printHiddenMarker, workspaceProjectDirectory} from './src/projects/projectCommands';
-import {DISTRO_NAMES, lockedOutMessage, readUserProfile, updateUserProfile, verifyUserPassword, type LinuxDistro, type ProfileUser, type UserProfile} from './src/profile/profileStore';
+import {DISTRO_NAMES, dismissAccountIntro, lockedOutMessage, readUserProfile, updateUserProfile, verifyUserPassword, type LinuxDistro, type ProfileUser, type UserProfile} from './src/profile/profileStore';
 import {setupOnboardingProfile} from './src/profile/onboardingSetup';
 import {readDownloadSources, writeDownloadSources} from './src/terminal/downloadSources';
 import {LoadingScreen} from './src/ui/LoadingScreen';
@@ -623,7 +623,25 @@ function App(): React.JSX.Element {
       <MetroHomeScreen
         githubAccount={githubAccount}
         user={profile?.users.find(candidate => candidate.distro === activeDistro)}
-        onOpenUser={() => setRoute('user')}
+        onOpenUser={() => {
+          // Finding Account on their own counts as seeing the upgrade card.
+          if (profile?.accountIntro === true) {
+            void dismissAccountIntro();
+            setProfile({users: profile.users});
+          }
+          setRoute('user');
+        }}
+        accountIntro={profile?.accountIntro === true ? {
+          onOpen: () => {
+            void dismissAccountIntro();
+            setProfile({users: profile.users});
+            setRoute('user');
+          },
+          onDismiss: () => {
+            void dismissAccountIntro();
+            setProfile({users: profile.users});
+          },
+        } : undefined}
         loadRecentSessions={loadRecentSessions}
         onOpenGithubLogin={openHomeGithubLogin}
         onOpenGithubAccount={openGithubAccount}

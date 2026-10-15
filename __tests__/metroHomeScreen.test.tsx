@@ -56,6 +56,38 @@ describe('MetroHomeScreen', () => {
     });
   });
 
+  test('points an upgraded user at Account once, from a card above the menu', async () => {
+    const onOpen = jest.fn();
+    const onDismiss = jest.fn();
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <MetroHomeScreen
+          accountIntro={{onOpen, onDismiss}}
+          onOpen={() => undefined}
+          onOpenGithubLogin={() => undefined}
+          user={{distro: 'alpine', username: 'horus', avatar: 'falcon'}}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const find = (testID: string) => renderer.root.findAllByProps({testID});
+    expect(find('metro-account-intro').length).toBeGreaterThan(0);
+    await ReactTestRenderer.act(async () => { find('metro-account-intro-open')[0].props.onPress(); });
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await ReactTestRenderer.act(async () => { find('metro-account-intro-dismiss')[0].props.onPress(); });
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+
+    await ReactTestRenderer.act(async () => {
+      renderer.update(<MetroHomeScreen onOpen={() => undefined} onOpenGithubLogin={() => undefined} user={{distro: 'alpine', username: 'horus', avatar: 'falcon'}} />);
+    });
+    expect(find('metro-account-intro')).toHaveLength(0);
+    await ReactTestRenderer.act(async () => {
+      renderer.unmount();
+      await Promise.resolve();
+    });
+  });
+
   test('shows who is signed in beside a compact GitHub card', async () => {
     const onOpenUser = jest.fn();
     const onOpenGithubLogin = jest.fn();
