@@ -23,7 +23,9 @@ export type LoginScreenProps = Readonly<{
  */
 export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): React.JSX.Element {
   const single = users.length === 1;
-  const [selected, setSelected] = React.useState<ProfileUser | undefined>(single ? users[0] : undefined);
+  const [picked, setPicked] = React.useState<ProfileUser | undefined>();
+  // One user skips the list and the brand entirely, even if users load late.
+  const selected = single ? users[0] : picked;
   const [password, setPassword] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [validationError, setValidationError] = React.useState<string | undefined>();
@@ -31,13 +33,13 @@ export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): 
   const shake = React.useRef(new Animated.Value(0)).current;
 
   const choose = React.useCallback((user: ProfileUser) => {
-    setSelected(user);
+    setPicked(user);
     setPassword('');
     setValidationError(undefined);
   }, []);
 
   const switchUser = React.useCallback(() => {
-    setSelected(undefined);
+    setPicked(undefined);
     setPassword('');
     setValidationError(undefined);
   }, []);
