@@ -34,7 +34,9 @@ describe('LoginScreen', () => {
     expect(renderer.root.findByProps({testID: 'login-logo'}).props.style).toMatchObject({height: 112, width: 112});
     expect(renderer.root.findByProps({testID: 'login-wordmark'}).props.children).toBe('HORUS');
     expect(has('login-user-alpine-selected')).toBe(true);
-    expect(renderer.root.findByProps({testID: 'login-password'}).props.placeholder).toBe('Password');
+    expect(renderer.root.findByProps({testID: 'login-password'}).props.placeholder).toBe('Enter Password');
+    // One user has nobody to switch to.
+    expect(has('login-back')).toBe(false);
 
     await press('login-submit');
     expect(renderer.root.findByProps({testID: 'login-validation-error'}).props.children).toBe('Enter horus’s password to unlock Horus.');
@@ -45,15 +47,23 @@ describe('LoginScreen', () => {
     await ReactTestRenderer.act(async () => { renderer.unmount(); });
   });
 
-  test('shows every user like a Linux greeter and signs in the one picked', async () => {
+  test('shows every user like the Mac login window, then only the one picked', async () => {
     const {renderer, logins, press, type, has} = await render([ALPINE_USER, DEBIAN_USER]);
-    expect(has('login-user-alpine-selected')).toBe(true);
+    // First only the users; no password until one is picked.
+    expect(has('login-user-alpine')).toBe(true);
     expect(has('login-user-debian')).toBe(true);
+    expect(has('login-password')).toBe(false);
 
+    await press('login-user-alpine');
+    expect(has('login-user-alpine-selected')).toBe(true);
+    expect(has('login-user-debian')).toBe(false);
     await type('typed for alpine');
+
+    // Switch user goes back to the list and forgets what was typed.
+    await press('login-back');
+    expect(has('login-password')).toBe(false);
     await press('login-user-debian');
     expect(has('login-user-debian-selected')).toBe(true);
-    // Switching users clears what was typed for the other one.
     expect(renderer.root.findByProps({testID: 'login-password'}).props.value).toBe('');
     expect(renderer.root.findByProps({testID: 'login-password'}).props.accessibilityLabel).toBe('deb’s password');
 
