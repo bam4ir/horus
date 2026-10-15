@@ -29,7 +29,7 @@ class DebianRootfsDeviceTest {
 
     val testRoot = File(targetContext.filesDir, "debian-device-test-${System.nanoTime()}")
     val paths = DistroStorePaths(testRoot)
-    val prober = ProotGuestProber(runtime, File(paths.sessions, ".proot-scratch"))
+    val prober = ProotGuestProber(runtime, paths.guestTmp)
     val store = DistroStoreCore(
       paths = paths,
       downloader = HttpArchiveDownloader(),

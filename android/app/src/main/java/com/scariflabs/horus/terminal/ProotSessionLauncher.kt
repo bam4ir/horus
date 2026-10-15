@@ -37,6 +37,7 @@ class ProotSessionLauncher(
   private val seccompAcceleration: Boolean = false,
   /** Alpine mirror and npm registry for package installs inside the guest. */
   private val downloadSources: DownloadSources = DownloadSources(),
+  private val hardlinkDir: File = File(scratchDir.absoluteFile.parentFile, "l"),
 ) {
 
   /** A harness's home, as the app's own sessions of that harness see it. */
@@ -265,6 +266,12 @@ class ProotSessionLauncher(
     if (!scratchDir.exists() && !scratchDir.mkdirs() && !scratchDir.isDirectory) {
       throw IllegalStateException("cannot create proot scratch directory")
     }
+    require(!Files.isSymbolicLink(scratchDir.toPath())) { "proot scratch directory is a symbolic link" }
+    DistroStoreCore.pruneProotTemps(scratchDir, hostProcDir)
+    require(!Files.isSymbolicLink(hardlinkDir.toPath())) { "proot hardlink directory is a symbolic link" }
+    if (!hardlinkDir.isDirectory && !hardlinkDir.mkdirs() && !hardlinkDir.isDirectory) {
+      throw IllegalStateException("cannot create proot hardlink directory")
+    }
     prepareResolverFile(rootfsDir)
     prepareCodexProfile(guestHomeDir)
     when (toolchainTarget) {
@@ -334,6 +341,12 @@ class ProotSessionLauncher(
         add("-b")
         add("${source.canonicalFile.absolutePath}:$guestPath")
       }
+      add("-b")
+      add("${scratchDir.canonicalPath}:/tmp")
+      // Emulated links contain absolute host backing paths. Map only this
+      // backing directory at the same path so apk/Node can stat those links.
+      add("-b")
+      add("${hardlinkDir.canonicalPath}:${hardlinkDir.canonicalPath}")
       deviceBinds.forEach { bind ->
         add("-b")
         add("${bind.source.canonicalFile.absolutePath}:${bind.guestPath}")
@@ -360,6 +373,9 @@ class ProotSessionLauncher(
       add("PROOT_LOADER=${runtime.loaderBin.absolutePath}")
       add("PROOT_LOADER_32=${runtime.loaderBin.absolutePath}")
       add("PROOT_TMP_DIR=${scratchDir.canonicalFile.absolutePath}")
+      // Backing files beside the source keep a package directory nonempty
+      // while another alias still exists. Keep them outside replaceable trees.
+      add("PROOT_L2S_DIR=${hardlinkDir.canonicalPath}")
       // Keep the stable ptrace path on the supported Android API. PRoot's
       // seccomp acceleration crashes this device before the guest shell opens.
       if (!seccompAcceleration) add("PROOT_NO_SECCOMP=1")
@@ -385,6 +401,14 @@ class ProotSessionLauncher(
       // `/bin/busybox top` must reach the guest binary with their argv intact.
       add("PATH=$guestPath")
       add("LANG=$GUEST_LANG")
+      // Bound CoreCLR's GC reservations on Android ARM64's limited VA space.
+      add("DOTNET_gcServer=0")
+      add("DOTNET_GCHeapHardLimit=0x40000000")
+      add("DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER=1")
+      // SDK server opt-out and Roslyn shared compilation are separate knobs.
+      // A detached VBCSCompiler otherwise keeps PRoot alive after shell exit.
+      add("DOTNET_CLI_USE_MSBUILD_SERVER=0")
+      add("UseSharedCompilation=false")
       add("TZ=${GuestTimeZone.forGuest(rootfsDir)}")
       addAll(downloadSources.guestEnvironment())
     }
@@ -969,6 +993,50 @@ class ProotSessionLauncher(
     }.getOrDefault(false)
   }
 
+  internal fun codexPayloadStamp(guestHomeDir: File): String? {
+    if (!hasCodexPayload(guestHomeDir)) return null
+    val modules = File(guestHomeDir, ".local/lib/node_modules")
+    val packageRoot = File(modules, "@openai/codex")
+    val platformRoot = listOf(
+      File(packageRoot, "node_modules/@openai/codex-linux-arm64"),
+      File(modules, "@openai/codex-linux-arm64"),
+    ).firstOrNull { File(it, "package.json").isFile } ?: packageRoot
+    val compatible = runCatching {
+      val wrapper = org.json.JSONObject(File(packageRoot, "package.json").readText())
+      val spec = wrapper.optJSONObject("optionalDependencies")?.optString("@openai/codex-linux-arm64").orEmpty()
+      val version = wrapper.getString("version")
+      if (platformRoot == packageRoot) spec.isEmpty() else {
+        val nativeVersion = org.json.JSONObject(File(platformRoot, "package.json").readText()).getString("version")
+        spec == "npm:@openai/codex@$nativeVersion" && nativeVersion == "$version-linux-arm64"
+      }
+    }.getOrDefault(false)
+    if (!compatible) return null
+    val vendor = File(platformRoot, "vendor/aarch64-unknown-linux-musl")
+    val native = listOf(File(vendor, "bin/codex"), File(vendor, "codex/codex"))
+      .firstOrNull { it.isFile && it.canExecute() } ?: return null
+    // A script/empty file is not a Linux ARM64 native payload.
+    val valid = runCatching {
+      native.inputStream().use {
+        val header = ByteArray(20)
+        it.read(header) == 20 && header[0] == 0x7f.toByte() &&
+          header[1] == 0x45.toByte() && header[2] == 0x4c.toByte() && header[3] == 0x46.toByte() &&
+          header[4] == 2.toByte() && header[5] == 1.toByte() &&
+          header[18] == 0xb7.toByte() && header[19] == 0.toByte()
+      }
+    }.getOrDefault(false)
+    if (!valid) return null
+    val identities = listOf(
+      File(packageRoot, "bin/codex.js"), File(packageRoot, "package.json"),
+      File(platformRoot, "package.json"), native,
+    ).map { filePayloadStamp(it) ?: return null }
+    val metadata = listOf(File(packageRoot, "package.json"), File(platformRoot, "package.json")).map { file ->
+      runCatching {
+        java.security.MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
+      }.getOrNull() ?: return null
+    }
+    return (identities + metadata).joinToString(",", postfix = ",")
+  }
+
   private fun hasOpenCodePayload(guestHomeDir: File): Boolean {
     val entry = listOf(
       File(guestHomeDir, ".local/lib/node_modules/opencode-ai/bin/opencode"),
@@ -986,6 +1054,10 @@ class ProotSessionLauncher(
       File(guestHomeDir, ".local/lib/node_modules/opencode-ai/bin/opencode"),
       File(guestHomeDir, ".local/lib/node_modules/opencode-ai/bin/opencode.exe"),
     ).firstOrNull { it.isFile && it.canExecute() } ?: return null
+    return filePayloadStamp(entry)
+  }
+
+  private fun filePayloadStamp(entry: File): String? {
     return runCatching {
       val stat = Os.stat(entry.absolutePath)
       "${stat.st_size}:${stat.st_mtime}:${stat.st_ino}:${stat.st_dev}"
@@ -1054,9 +1126,11 @@ class ProotSessionLauncher(
       TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "opencode"
       else -> return false
     }
-    val markerReady = if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE) {
-      val stamp = openCodePayloadStamp(guestHomeDir)
-      stamp != null && readyMarker.isFile && readyMarker.length() in 1..128 &&
+    val markerReady = if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE ||
+      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX) {
+      val stamp = if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX) codexPayloadStamp(guestHomeDir)
+        else openCodePayloadStamp(guestHomeDir)
+      stamp != null && readyMarker.isFile && readyMarker.length() in 1..512 &&
         runCatching { readyMarker.readText(Charsets.US_ASCII).trim() == "ready:$stamp" }.getOrDefault(false)
     } else {
       readyMarker.isFile
@@ -1167,8 +1241,23 @@ class ProotSessionLauncher(
       fi
       $ZSH_PROFILE_END
     """.trimIndent()
+    internal val ZSH_EXIT_SCRIPT = """
+      # Interactive exit/EOF must not inherit a failed build's status.
+      # Keep signal-style statuses, and never apply this to command shells.
+      if [[ -o interactive && -z "${'$'}{ZSH_EXECUTION_STRING-}" ]]; then
+        zshexit() { (( ${'$'}? > 128 )) || exit 0; }
+      fi
+    """.trimIndent()
+    internal val DOTNET_ENV_SCRIPT = """
+      export DOTNET_gcServer="${'$'}{DOTNET_gcServer:-0}"
+      export DOTNET_GCHeapHardLimit="${'$'}{DOTNET_GCHeapHardLimit:-0x40000000}"
+      export DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER="${'$'}{DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER:-1}"
+      export DOTNET_CLI_USE_MSBUILD_SERVER="${'$'}{DOTNET_CLI_USE_MSBUILD_SERVER:-0}"
+      export UseSharedCompilation="${'$'}{UseSharedCompilation:-false}"
+    """.trimIndent()
     private val ZSHRC_BLOCK = """
       $ZSHRC_BEGIN
+${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       setopt prompt_subst
       setopt transient_rprompt
       umask 0002
@@ -1327,6 +1416,135 @@ class ProotSessionLauncher(
         : > "${'$'}pkg_progress"
         return "${'$'}pkg_result"
       }
+    """.trimIndent()
+    // npm may successfully install the JS wrapper while skipping its optional
+    // native package. Install the exact declared alias as a required package
+    // on recovery; both Linux layouts contain Alpine-compatible musl binaries.
+    internal val CODEX_INSTALL_SCRIPT = """
+      codex_entry="${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js"
+      codex_native_path() {
+        codex_root=${'$'}{codex_entry%/bin/codex.js}
+        codex_platform=${'$'}codex_root
+        for candidate in "${'$'}codex_root/node_modules/@openai/codex-linux-arm64" "${'$'}{codex_root%/codex}/codex-linux-arm64"; do
+          if [ -f "${'$'}candidate/package.json" ]; then codex_platform=${'$'}candidate; break; fi
+        done
+        for candidate in "${'$'}codex_platform/vendor/aarch64-unknown-linux-musl/bin/codex" "${'$'}codex_platform/vendor/aarch64-unknown-linux-musl/codex/codex"; do
+          if [ -x "${'$'}candidate" ]; then codex_native=${'$'}candidate; return 0; fi
+        done
+        return 1
+      }
+      codex_stamp() {
+        # File identities cover the wrapper, declared version, selected alias
+        # and native payload. Routine SSH checks start neither Node nor Codex.
+        codex_native_path || return 1
+        codex_stats=${'$'}(stat -L -c '%s:%Y:%i:%d' "${'$'}codex_entry" "${'$'}codex_root/package.json" "${'$'}codex_platform/package.json" "${'$'}codex_native") || return 1
+        codex_metadata=${'$'}(sha256sum "${'$'}codex_root/package.json" "${'$'}codex_platform/package.json") || return 1
+        printf '%s\n' "${'$'}codex_stats" | tr '\n' ','
+        printf '%s\n' "${'$'}codex_metadata" | cut -d ' ' -f 1 | tr '\n' ','
+      }
+      codex_metadata_valid() {
+        codex_native_path || return 1
+        /usr/bin/node --input-type=commonjs -e '
+          const fs = require("fs");
+          const [root, platform, binary] = process.argv.slice(1);
+          const wrapper = JSON.parse(fs.readFileSync(root + "/package.json"));
+          const native = JSON.parse(fs.readFileSync(platform + "/package.json"));
+          const spec = wrapper.optionalDependencies?.["@openai/codex-linux-arm64"];
+          if (platform !== root) {
+            if (!spec?.startsWith("npm:@openai/codex@") || native.version !== spec.slice("npm:@openai/codex@".length) || native.version !== wrapper.version + "-linux-arm64") process.exit(1);
+          } else if (spec || !wrapper.version) process.exit(1);
+          const fd = fs.openSync(binary, "r"), h = Buffer.alloc(20);
+          const size = fs.readSync(fd, h, 0, 20, 0); fs.closeSync(fd);
+          if (size !== 20 || h.readUInt32BE(0) !== 0x7f454c46 || h[4] !== 2 || h[5] !== 1 || h.readUInt16LE(18) !== 183) process.exit(1);
+        ' "${'$'}codex_root" "${'$'}codex_platform" "${'$'}codex_native"
+      }
+      codex_works() {
+        timeout -s KILL 20 /usr/bin/node "${'$'}codex_entry" --version
+      }
+      codex_stamped() {
+        codex_identity=${'$'}(codex_stamp) && [ -n "${'$'}codex_identity" ] &&
+          [ "${'$'}(cat "${'$'}HOME/.cache/horus/codex.ready" 2>/dev/null)" = "ready:${'$'}codex_identity" ]
+      }
+      mark_codex_ready() {
+        codex_identity=${'$'}(codex_stamp) && [ -n "${'$'}codex_identity" ] || {
+          rm -f "${'$'}HOME/.cache/horus/codex.ready"
+          return 1
+        }
+        printf 'ready:%s\n' "${'$'}codex_identity" > "${'$'}HOME/.cache/horus/codex.ready.tmp" &&
+          mv -f "${'$'}HOME/.cache/horus/codex.ready.tmp" "${'$'}HOME/.cache/horus/codex.ready"
+      }
+      restore_codex_package() {
+        codex_package="${'$'}HOME/.local/lib/node_modules/@openai/codex"
+        codex_previous="${'$'}HOME/.local/lib/node_modules/@openai/.codex.previous"
+        if [ ! -e "${'$'}codex_package" ] && [ -d "${'$'}codex_previous" ]; then
+          mv "${'$'}codex_previous" "${'$'}codex_package" || return 1
+        fi
+      }
+      stage_codex_package() (
+        codex_stage="${'$'}HOME/.local/.codex-stage"
+        rm -rf "${'$'}codex_stage" || exit 1
+        mkdir -p "${'$'}codex_stage" || exit 1
+        trap 'rm -rf "${'$'}codex_stage"' EXIT
+        npm install --global --force --prefix "${'$'}codex_stage" --include=optional --no-package-lock --no-audit --no-fund --no-progress --loglevel=error @openai/codex || exit 1
+        codex_entry="${'$'}codex_stage/lib/node_modules/@openai/codex/bin/codex.js"
+        # Required recovery installs cannot reuse a top-level alias from an
+        # earlier wrapper. Move the exact alias inside the staged wrapper.
+        if ! codex_metadata_valid; then
+          codex_spec=${'$'}(/usr/bin/node --input-type=commonjs -e '
+            const p = require(process.argv[1]);
+            const spec = p.optionalDependencies && p.optionalDependencies["@openai/codex-linux-arm64"];
+            if (!spec || spec !== "npm:@openai/codex@" + p.version + "-linux-arm64") process.exit(1);
+            console.log("@openai/codex-linux-arm64@" + spec);
+          ' "${'$'}{codex_entry%/bin/codex.js}/package.json") || exit 1
+          rm -rf "${'$'}{codex_entry%/bin/codex.js}/node_modules/@openai/codex-linux-arm64" "${'$'}codex_stage/lib/node_modules/@openai/codex-linux-arm64" || exit 1
+          npm install --global --force --prefix "${'$'}codex_stage" --include=optional --no-package-lock --no-audit --no-fund --no-progress --loglevel=error "${'$'}codex_spec" || exit 1
+        fi
+        codex_native_path >/dev/null || exit 1
+        if [ "${'$'}codex_platform" = "${'$'}codex_stage/lib/node_modules/@openai/codex-linux-arm64" ]; then
+          mkdir -p "${'$'}{codex_entry%/bin/codex.js}/node_modules/@openai" &&
+            mv "${'$'}codex_platform" "${'$'}{codex_entry%/bin/codex.js}/node_modules/@openai/codex-linux-arm64" || exit 1
+        fi
+        chmod u+rx "${'$'}codex_entry" || exit 1
+        codex_metadata_valid && codex_works && codex_stamp >/dev/null || exit 1
+        codex_package="${'$'}HOME/.local/lib/node_modules/@openai/codex"
+        codex_previous="${'$'}HOME/.local/lib/node_modules/@openai/.codex.previous"
+        mkdir -p "${'$'}{codex_package%/codex}" || exit 1
+        rm -rf "${'$'}codex_previous" || exit 1
+        # The durable backup also covers SIGKILL/power loss between renames.
+        # Keep it after success; running sessions may still use its payload.
+        if [ -e "${'$'}codex_package" ]; then mv "${'$'}codex_package" "${'$'}codex_previous" || exit 1; fi
+        trap 'restore_codex_package; rm -rf "${'$'}codex_stage"' EXIT
+        trap 'exit 1' HUP INT TERM
+        mv "${'$'}{codex_entry%/bin/codex.js}" "${'$'}codex_package" || exit 1
+        codex_entry="${'$'}codex_package/bin/codex.js"
+        if ! mark_codex_ready; then
+          rm -rf "${'$'}codex_package"
+          restore_codex_package
+          exit 1
+        fi
+      )
+      install_codex_package() (
+        mkdir -p "${'$'}HOME/.cache/horus" || exit 1
+        # App provisioning and SSH share this lock, including crash recovery.
+        exec 8>"${'$'}HOME/.cache/horus/codex-install.lock"
+        flock 8 || exit 1
+        restore_codex_package || exit 1
+        if codex_stamped; then exit 0; fi
+        if codex_metadata_valid; then
+          codex_status=0
+          codex_works || codex_status=${'$'}?
+          if [ "${'$'}codex_status" = 0 ]; then mark_codex_ready; exit ${'$'}?; fi
+          case "${'$'}codex_status" in
+            124|137)
+              printf '%s\n' 'Codex readiness check timed out; the installed package was preserved. Retry when the device is less busy.' >&2
+              exit "${'$'}codex_status" ;;
+          esac
+        fi
+        if ! stage_codex_package; then
+          printf '%s\n' 'Codex recovery failed; the previous package was preserved. Check connectivity/free storage and retry.' >&2
+          exit 1
+        fi
+      )
     """.trimIndent()
     private val TOOLCHAIN_PROVISION_SCRIPT = """
       set -eu
@@ -1534,14 +1752,10 @@ class ProotSessionLauncher(
           exit 22
         fi
       fi
-      codex_entry=/root/.local/lib/node_modules/@openai/codex/bin/codex.js
-      if [ "${'$'}target" = codex ] && {
-        [ ! -f "${'$'}target_marker" ] ||
-        [ ! -f "${'$'}codex_entry" ] ||
-        [ "${'$'}(head -n 1 "${'$'}codex_entry" 2>/dev/null || true)" != '#!/usr/bin/env node' ];
-      }; then
+      $CODEX_INSTALL_SCRIPT
+      if [ "${'$'}target" = codex ] && ! codex_stamped; then
         mark_provision_stage codex
-        if ! run_downloading Codex "${'$'}(npm_download_kb @openai/codex)" /root/.npm /root/.cache/horus/codex-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error @openai/codex; then
+        if ! run_logged /root/.cache/horus/codex-install.log install_codex_package; then
           mark_provision_stage codex_failed
           exit 23
         fi
@@ -1569,6 +1783,13 @@ class ProotSessionLauncher(
         [ ! -f "${'$'}target_marker" ] || [ "${'$'}opencode_payload_valid" != true ];
       }; then
         mark_provision_stage opencode
+        # npm/postinstall can retain an existing corrupted selected binary.
+        # Remove only the replaceable package, preserving ~/.config/opencode.
+        rm -f "${'$'}target_marker"
+        if ! rm -rf /root/.local/lib/node_modules/opencode-ai; then
+          mark_provision_stage opencode_failed
+          exit 24
+        fi
         if ! run_downloading OpenCode "${'$'}(npm_download_kb opencode-ai)" /root/.npm /root/.cache/horus/opencode-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error opencode-ai; then
           mark_provision_stage opencode_failed
           exit 24
@@ -1577,7 +1798,7 @@ class ProotSessionLauncher(
         if [ ! -f "${'$'}opencode_entry" ]; then
           opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode.exe
         fi
-        if ! { test -f "${'$'}opencode_entry" && { [ -x "${'$'}opencode_entry" ] || chmod u+rx "${'$'}opencode_entry"; } && "${'$'}opencode_entry" --version >/dev/null 2>&1; }; then
+        if ! { test -f "${'$'}opencode_entry" && { [ -x "${'$'}opencode_entry" ] || chmod u+rx "${'$'}opencode_entry"; } && "${'$'}opencode_entry" --version >/dev/null; }; then
           mark_provision_stage opencode_failed
           exit 24
         fi
@@ -1681,12 +1902,17 @@ EOF
       elif [ "${'$'}target" = claude ]; then
         test -x /root/.local/bin/claude
       elif [ "${'$'}target" = codex ]; then
-        test -x /root/.local/bin/codex
+        if ! codex_stamped; then
+          mark_provision_stage codex_failed
+          exit 23
+        fi
       else
         test -x /root/.local/bin/opencode
       fi
       if [ "${'$'}target" = opencode ] && [ -n "${'$'}opencode_payload_stamp" ]; then
         printf 'ready:%s\n' "${'$'}opencode_payload_stamp" > "${'$'}target_marker"
+      elif [ "${'$'}target" = codex ]; then
+        : # install_codex_package already recorded validated readiness atomically.
       elif [ "${'$'}target" != shell ]; then
         printf '%s\n' ready > "${'$'}target_marker"
       fi
@@ -1756,6 +1982,8 @@ EOF
       # which PRoot's emulated root cannot satisfy.
       exec setpriv --reuid="${'$'}session_uid" --regid="${'$'}session_gid" --clear-groups -- /bin/sh -c "${'$'}user_script"
     """.trimIndent()
+    // The embedded Codex script supplies its own indent, including its first
+    // line, so the outer trimIndent() keeps heredoc terminators at column zero.
     private val REMOTE_ACCESS_SCRIPT = """
       set -eu
       user="${'$'}1"
@@ -1821,6 +2049,7 @@ EOF
       #!/bin/sh
       export PATH="${'$'}HOME/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
       export LANG="${'$'}{LANG:-C.UTF-8}"
+${DOTNET_ENV_SCRIPT.prependIndent("      ")}
       # A script loses dropbear's "-" login marker in ${'$'}0; an interactive
       # login is the call without arguments (commands arrive as -c ...).
       if [ "${'$'}#" -eq 0 ]; then
@@ -1882,9 +2111,12 @@ EOF
           printf '#!/bin/sh\nexec %s "%s" "$@"\n' "${'$'}1" "${'$'}2" > "${'$'}launcher" &&
           chmod 755 "${'$'}launcher"
       }
+${CODEX_INSTALL_SCRIPT.prependIndent("      ")}
       install_codex() {
-        entry="${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js"
-        install_npm_agent @openai/codex && test -f "${'$'}entry" && write_launcher /usr/bin/node "${'$'}entry"
+        if ! test -x /usr/bin/node || ! command -v npm >/dev/null 2>&1; then
+          system_packages bash ca-certificates git nodejs npm libgcc libstdc++ || return 1
+        fi
+        test -x /usr/bin/node && install_codex_package && write_launcher /usr/bin/node '${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js'
       }
       install_opencode() {
         install_npm_agent opencode-ai || return 1
@@ -1893,12 +2125,15 @@ EOF
         [ -f "${'$'}entry" ] || entry="${'$'}entry.exe"
         test -f "${'$'}entry" && chmod u+rx "${'$'}entry" && write_launcher '' "${'$'}entry"
       }
-      if [ ! -x "${'$'}launcher" ]; then
+      agent_ready() {
+        test -x "${'$'}launcher" && { [ "${'$'}tool" != codex ] || codex_stamped; }
+      }
+      if ! agent_ready; then
         mkdir -p "${'$'}HOME/.local/bin" "${'$'}cache"
         # Two sessions typing the same command install it once.
-        exec 9>"${'$'}cache/${'$'}tool-install.lock"
+        exec 9>"${'$'}cache/${'$'}tool-launch.lock"
         flock 9
-        if [ ! -x "${'$'}launcher" ]; then
+        if ! agent_ready; then
           printf '%s is not installed yet. Installing it now (first run only, needs internet)...\n' "${'$'}name" >&2
           if ! "install_${'$'}tool" >&2 || [ ! -x "${'$'}launcher" ]; then
             printf 'Could not install %s. Check the internet connection and try again.\n' "${'$'}name" >&2
@@ -1925,6 +2160,7 @@ EOF
       # explicit socket. Do the same for interactive SSH logins only.
       mkdir -p /etc/zsh/zshrc.d
       cat > /etc/zsh/zshrc.d/horus-ssh.zsh.tmp <<'HORUS_ZSH'
+${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       if [[ -n "${'$'}{SSH_CONNECTION-}" ]]; then
         claude() {
           case " ${'$'}* " in

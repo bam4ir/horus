@@ -12,6 +12,85 @@ import org.junit.Test
 
 class ProotSessionLauncherTest {
   @Test
+  fun interactiveZshExitAndEofNormalizeBuildFailuresButPreserveKillsAndCommandStatus() {
+    val zsh = System.getenv("HORUS_TEST_ZSH") ?: "/usr/bin/zsh"
+    org.junit.Assume.assumeTrue("zsh required for shell behavior test", File(zsh).canExecute())
+    fun checkStatus(expected: Int, commands: String, interactive: Boolean) {
+      val process = ProcessBuilder(zsh, if (interactive) "-dfi" else "-df")
+        .redirectErrorStream(true).start()
+      process.outputStream.bufferedWriter().use {
+        // Startup files accept comments; enable them for the stdin fixture too.
+        if (interactive) it.write("setopt interactivecomments\n")
+        it.write(ProotSessionLauncher.ZSH_EXIT_SCRIPT + "\n" + commands)
+      }
+      assertTrue("zsh fixture timed out", process.waitFor(10, TimeUnit.SECONDS))
+      val output = process.inputStream.bufferedReader().readText()
+      assertEquals("commands=$commands\n$output", expected, process.exitValue())
+    }
+    checkStatus(0, "false\nexit\n", true)
+    checkStatus(0, "false\n", true)
+    checkStatus(137, "exit 137\n", true)
+    checkStatus(137, "kill -KILL ${'$'}${'$'}\n", true)
+    checkStatus(23, "exit 23\n", false)
+    val commandShell = ProcessBuilder(zsh, "-dfi", "-c", ProotSessionLauncher.ZSH_EXIT_SCRIPT + "\nfalse")
+      .redirectErrorStream(true).start()
+    assertTrue(commandShell.waitFor(10, TimeUnit.SECONDS))
+    assertEquals("interactive -c must retain CLI failures", 1, commandShell.exitValue())
+  }
+
+  @Test
+  fun shortTmpBindFitsClaudeSocketAndPrunesOnlyOrphanedProotFiles() {
+    val base = Files.createTempDirectory("horus-tmp").toFile()
+    try {
+      val paths = DistroStorePaths(base)
+      val scratch = paths.guestTmp.apply { mkdirs() }
+      val proc = File(base, "proc").apply { mkdirs() }
+      File(proc, "123").mkdirs()
+      val live = File(scratch, "proot-123-ABC123").apply { writeText("keep") }
+      val dead = File(scratch, "proot-456-ABC123").apply { writeText("orphan") }
+      val deadTree = File(scratch, "proot-tmpfs--456-ABC123").apply { mkdirs() }
+      File(deadTree, "payload").writeText("orphan")
+      val userFile = File(scratch, "proot-user-data").apply { writeText("keep") }
+      val outside = File(base, "outside").apply { mkdirs() }
+      File(outside, "keep").writeText("user data")
+      Files.createSymbolicLink(File(deadTree, "link").toPath(), outside.toPath())
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      val home = File(base, "home").apply { mkdirs() }
+      val launch = launcher(base, proc, scratch).interactiveShellLaunchSpec(rootfs, home)
+      assertTrue(launch.argv.windowed(2).contains(listOf("-b", "${scratch.canonicalPath}:/tmp")))
+      assertTrue(launch.environment.contains("PROOT_TMP_DIR=${scratch.canonicalPath}"))
+      assertTrue(launch.environment.contains("PROOT_L2S_DIR=${paths.hardlinks.canonicalPath}"))
+      assertTrue(launch.argv.windowed(2).contains(listOf("-b", "${paths.hardlinks.canonicalPath}:${paths.hardlinks.canonicalPath}")))
+      assertFalse(paths.hardlinks.canonicalPath.startsWith(scratch.canonicalPath + File.separator))
+      assertTrue(live.exists())
+      assertFalse(dead.exists())
+      assertFalse(deadTree.exists())
+      assertTrue(userFile.exists())
+      assertTrue(File(outside, "keep").exists())
+      val androidTmp = DistroStorePaths(File("/data/user/0/com.scariflabs.horus/files/horus")).guestTmp
+      val socketPath = "${androidTmp.path}/claude-messaging-61001/12264.sock"
+      assertTrue("translated socket must fit sun_path with NUL", socketPath.toByteArray(Charsets.UTF_8).size < 108)
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun prootCleanupDoesNotFollowATmpDirectorySymlink() {
+    val base = Files.createTempDirectory("horus-tmp-link").toFile()
+    try {
+      val outside = File(base, "outside").apply { mkdirs() }
+      val keep = File(outside, "proot-456-ABC123").apply { writeText("keep") }
+      val link = File(base, "tmp")
+      Files.createSymbolicLink(link.toPath(), outside.toPath())
+      DistroStoreCore.pruneProotTemps(link, File(base, "proc"))
+      assertTrue(keep.exists())
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
   fun bindsWorkspaceAndSetsPersistentGuestPaths() {
     val base = Files.createTempDirectory("horus-launcher").toFile()
     try {
@@ -61,6 +140,11 @@ class ProotSessionLauncherTest {
       assertFalse(launch.argv.any { it.contains("compat-bin") })
       assertEquals("/workspace", launch.argv[launch.argv.indexOf("-w") + 1])
       assertTrue(launch.environment.contains("PWD=/workspace"))
+      assertTrue(launch.environment.contains("DOTNET_gcServer=0"))
+      assertTrue(launch.environment.contains("DOTNET_GCHeapHardLimit=0x40000000"))
+      assertTrue(launch.environment.contains("DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER=1"))
+      assertTrue(launch.environment.contains("DOTNET_CLI_USE_MSBUILD_SERVER=0"))
+      assertTrue(launch.environment.contains("UseSharedCompilation=false"))
       assertTrue(launch.environment.contains("PROOT_NO_SECCOMP=1"))
       assertTrue(launch.environment.contains("PATH=${ProotSessionLauncher.GUEST_PATH}"))
       assertFalse(launch.argv.any { it.endsWith(":${ProotSessionLauncher.GUEST_PROC}/meminfo") && it.contains("proc-compat") })
@@ -90,6 +174,7 @@ class ProotSessionLauncherTest {
       assertTrue(zshrc.readText().contains("PROMPT=$'%{\\e[0;34m%}%B┌─["))
       assertTrue(zshrc.readText().contains("export PATH=\"\$HOME/.local/bin:/usr/local/bin:"))
       assertTrue(zshrc.readText().contains("umask 0002"))
+      assertTrue(zshrc.readText().contains(ProotSessionLauncher.ZSH_EXIT_SCRIPT))
       // A stray ^S must not freeze the terminal.
       assertTrue(zshrc.readText().contains("unsetopt flow_control\nstty -ixon"))
       assertFalse(zshrc.readText().contains("RPROMPT"))
@@ -346,7 +431,7 @@ class ProotSessionLauncherTest {
       assertTrue(launch.argv.last().contains("claude_failed"))
       assertTrue(launch.argv.last().contains("head -n 1"))
       assertTrue(launch.argv.last().contains("npm install --global --force"))
-      assertTrue(launch.argv.last().contains("--no-progress --loglevel=error @openai/codex"))
+      assertTrue(launch.argv.last().contains("--include=optional --no-package-lock --no-audit --no-fund --no-progress --loglevel=error @openai/codex"))
       assertTrue(launch.argv.last().contains("--no-progress --loglevel=error opencode-ai"))
       assertTrue(launch.argv.last().contains("stat -L -c '%s:%Y:%i:%d'"))
       assertTrue(launch.argv.last().contains("curl --connect-timeout 15 --max-time 300 -fsSL"))
@@ -854,6 +939,7 @@ class ProotSessionLauncherTest {
       command(
         "npm",
         "printf 'npm\\n' >> '${npmLog.absolutePath}'\n" +
+          "[ ! -e '${entryPath}' ] || exit 92\nmkdir -p '${payloadDir.absolutePath}'\n" +
           "cat > '${entryPath}' <<'HORUS_TEST_ENTRY'\n#!/bin/sh\nif [ \"${'$'}1\" = --version ]; then printf 'version\\n' >> '${versionLog.absolutePath}'; fi\nHORUS_TEST_ENTRY\nchmod u+rx '${entryPath}'",
       )
       val launcher = File(guestBin, "opencode")
@@ -920,6 +1006,15 @@ class ProotSessionLauncherTest {
       assertEquals("npm\n", npmLog.readText())
       assertEquals("version\n", versionLog.readText())
       assertTrue(entry.isFile && entry.canExecute())
+      val config = File(guestRoot, ".config/opencode/user.json").apply {
+        parentFile!!.mkdirs(); writeText("preserve user config")
+      }
+      entry.writeText("#!/bin/sh\nexit 91\n")
+      File(cacheDir, "opencode.ready").writeText("ready:old-payload\n")
+      assertTrue(runProvision().contains("HORUS_TOOLCHAIN_READY"))
+      assertEquals("npm\nnpm\n", npmLog.readText())
+      assertEquals("version\nversion\n", versionLog.readText())
+      assertEquals("preserve user config", config.readText())
     } finally {
       base.deleteRecursively()
     }
@@ -1113,7 +1208,27 @@ class ProotSessionLauncherTest {
       assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX))
       ps.delete()
       ps.writeText("procps")
+      assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX))
+      val native = File(home, ".local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex")
+      requireNotNull(native.parentFile).mkdirs()
+      File(home, ".local/lib/node_modules/@openai/codex/package.json").writeText("""{"version":"0.115.0","optionalDependencies":{"@openai/codex-linux-arm64":"npm:@openai/codex@0.115.0-linux-arm64"}}""")
+      File(home, ".local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/package.json").writeText("""{"version":"0.115.0-linux-arm64"}""")
+      native.writeText("broken")
+      native.setExecutable(true)
+      assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX))
+      val header = ByteArray(64)
+      header[0] = 0x7f; header[1] = 0x45; header[2] = 0x4c; header[3] = 0x46
+      header[4] = 2; header[5] = 1; header[18] = 0xb7.toByte()
+      native.writeBytes(header)
+      val marker = File(home, ".cache/horus/codex.ready")
+      // A legacy marker never proves the native binary was run successfully.
+      assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX))
+      marker.writeText("ready:${launcher.codexPayloadStamp(home)}\n")
       assertTrue(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX))
+      native.appendBytes(byteArrayOf(0))
+      assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX))
+      native.delete()
+      assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX))
     } finally {
       base.deleteRecursively()
     }
@@ -1368,7 +1483,70 @@ class ProotSessionLauncherTest {
         launcher.toolchainSessionLaunchSpec(rootfs, home, guestUsername = "nefer", target = TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL, rootHelper = true)
       }
       assertTrue(outside.listFiles().isNullOrEmpty())
+    } finally {
+      base.deleteRecursively()
+    }
+  }
 
+  @Test
+  fun remoteAccessHeredocsTerminateBeforeFollowingCommands() {
+    val base = Files.createTempDirectory("horus-remote-heredocs").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val launch = launcher(base, File(base, "proc").apply { mkdirs() }).remoteAccessLaunchSpec(
+        rootfs,
+        File(base, "home").apply { mkdirs() },
+        null,
+        "luna",
+      )
+      val script = launch.argv.takeLast(8)[2]
+      val lines = script.lines()
+      val followingCommands = mapOf(
+        "HORUS_SHELL" to listOf("chmod 755 \"\$login_shell.tmp\"", "mv -f \"\$login_shell.tmp\" \"\$login_shell\""),
+        "HORUS_INSTALLER" to listOf("chmod 755 \"\$agent_installer.tmp\"", "mv -f \"\$agent_installer.tmp\" \"\$agent_installer\""),
+        "HORUS_ZSH" to listOf("mv -f /etc/zsh/zshrc.d/horus-ssh.zsh.tmp /etc/zsh/zshrc.d/horus-ssh.zsh"),
+      )
+      for ((delimiter, following) in followingCommands) {
+        val opener = lines.indices.filter { lines[it].endsWith("<<'$delimiter'") }
+        assertEquals("one opener for $delimiter", 1, opener.size)
+        val terminator = lines.indices.filter { lines[it].trim() == delimiter }
+        assertEquals("one terminator for $delimiter", 1, terminator.size)
+        val start = opener.single()
+        val end = terminator.single()
+        assertEquals("$delimiter must close at column zero", delimiter, lines[end])
+        assertTrue("$delimiter closes after its opener", end > start)
+        assertEquals(following, lines.subList(end + 1, end + 1 + following.size))
+        val body = lines.subList(start + 1, end).joinToString("\n") + "\n"
+        if (delimiter == "HORUS_INSTALLER") {
+          assertTrue("shared Codex functions must survive interpolation", body.contains(ProotSessionLauncher.CODEX_INSTALL_SCRIPT))
+          assertTrue(body.contains("install_codex() {"))
+          assertTrue(body.contains("exec \"\$launcher\" \"\$@\""))
+        }
+        // Execute only the rendered cat/chmod/mv fragment in a temporary directory.
+        // Never run remote provisioning or the generated installers themselves.
+        val outputFile = File(base, delimiter)
+        val fragment = lines.subList(start, end + 1 + following.size).joinToString("\n")
+          .replace("/etc/zsh/zshrc.d/horus-ssh.zsh", outputFile.absolutePath)
+        val fixture = "set -eu\nlogin_shell='${outputFile.absolutePath}'\n" +
+          "agent_installer='${outputFile.absolutePath}'\n$fragment\nprintf 'after:$delimiter\\n'\n"
+        val output = File(base, "$delimiter.log")
+        val process = ProcessBuilder("/bin/sh", "-c", fixture)
+          .redirectErrorStream(true).redirectOutput(output).start()
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+          process.destroyForcibly()
+          throw AssertionError("$delimiter fixture exceeded the bounded host test timeout")
+        }
+        assertEquals(output.readText(), 0, process.exitValue())
+        assertEquals("after:$delimiter\n", output.readText())
+        assertEquals("subsequent commands must not enter $delimiter payload", body, outputFile.readText())
+        if (delimiter != "HORUS_ZSH") {
+          val syntax = ProcessBuilder("/bin/sh", "-n", outputFile.absolutePath)
+            .redirectErrorStream(true).redirectOutput(output).start()
+          assertTrue(syntax.waitFor(10, TimeUnit.SECONDS))
+          assertEquals(output.readText(), 0, syntax.exitValue())
+        }
+      }
     } finally {
       base.deleteRecursively()
     }

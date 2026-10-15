@@ -31,7 +31,7 @@ class DebianToolchainDeviceTest {
       paths = paths,
       downloader = HttpArchiveDownloader(),
       extractor = SafeTarExtractor(),
-      prober = ProotGuestProber(runtime, File(paths.sessions, ".proot-scratch")),
+      prober = ProotGuestProber(runtime, paths.guestTmp),
     )
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val dnsServers = connectivity.activeNetwork
@@ -40,7 +40,8 @@ class DebianToolchainDeviceTest {
       .orEmpty()
     val launcher = ProotSessionLauncher(
       runtime = runtime,
-      scratchDir = File(paths.sessions, ".proot-scratch"),
+      scratchDir = paths.guestTmp,
+      hardlinkDir = paths.hardlinks,
       dnsServersProvider = { dnsServers },
     )
     val debian = RootfsCatalog.DISTRO_DEBIAN
