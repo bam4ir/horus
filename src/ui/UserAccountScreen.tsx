@@ -6,7 +6,7 @@ import {InteractivePressable as Pressable} from './InteractivePressable';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BrandBackButton, BrandHeader, uiColors} from './brand';
 import {ProfileAvatar} from './ProfileAvatar';
-import {SettingsAction, SettingsRow, SettingsSection, SettingsSectionTitle} from './SettingsList';
+import {SettingsAction, SettingsRow, SettingsSection} from './SettingsList';
 import {UI_FONT_FAMILY} from './typography';
 import {useHardwareBack} from './useHardwareBack';
 
@@ -26,9 +26,9 @@ export type UserAccountScreenProps = Readonly<{
 
 /** Everything about Linux users, opened from the user card on the home screen. */
 export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onUpdateUser}: UserAccountScreenProps): React.JSX.Element {
-  const [editing, setEditing] = React.useState(false);
+  const [editing, setEditing] = React.useState<'name' | 'picture' | undefined>();
   // Back leaves the editor first, then the screen.
-  useHardwareBack(true, editing ? () => setEditing(false) : onBack);
+  useHardwareBack(true, editing !== undefined ? () => setEditing(undefined) : onBack);
   const missing = LINUX_DISTROS.find(distro => !users.some(other => other.distro === distro));
   const others = users.filter(other => other.distro !== user.distro);
 
@@ -42,27 +42,45 @@ export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onU
           action={<BrandBackButton onPress={onBack} testID="user-account-back" />}
         />
 
-        <View style={styles.signedIn}>
-          <SettingsSectionTitle title={editing ? 'EDIT YOUR ACCOUNT' : 'SIGNED IN AS'} />
+        <View style={styles.hero} testID="user-account-card">
+          <ProfileAvatar avatar={user.avatar} selected size={104} />
+          <Text numberOfLines={1} style={styles.username} testID="user-account-name">{user.username}</Text>
+          <Text numberOfLines={1} style={styles.meta}>
+            <Text style={styles.distro}>{DISTRO_NAMES[user.distro].toUpperCase()}</Text>
+            <Text testID="user-account-home">{`  ·  /home/${user.username}`}</Text>
+          </Text>
         </View>
-        {editing && onUpdateUser !== undefined ? (
-          <EditUserCard onCancel={() => setEditing(false)} onSave={onUpdateUser} onSaved={() => setEditing(false)} user={user} />
-        ) : (
-          <View style={[styles.card, styles.cardRow]} testID="user-account-card">
-            <ProfileAvatar avatar={user.avatar} selected size={72} />
-            <View style={styles.details}>
-              <Text numberOfLines={1} style={styles.username} testID="user-account-name">{user.username}</Text>
-              <Text style={styles.distro}>{DISTRO_NAMES[user.distro].toUpperCase()}</Text>
-              <Text numberOfLines={1} style={styles.home} testID="user-account-home">/home/{user.username}</Text>
-            </View>
-            {onUpdateUser === undefined ? null : (
-              <SettingsAction label="EDIT" onPress={() => setEditing(true)} testID="user-account-edit" />
-            )}
+
+        {editing !== undefined && onUpdateUser !== undefined ? (
+          <View style={styles.editor}>
+            <EditUserCard mode={editing} onCancel={() => setEditing(undefined)} onSave={onUpdateUser} onSaved={() => setEditing(undefined)} user={user} />
           </View>
+        ) : (
+          <SettingsSection title="YOUR ACCOUNT" testID="user-account-details">
+            <SettingsRow
+              accessibilityLabel={`Name, ${user.username}`}
+              label="Name"
+              onPress={onUpdateUser === undefined ? undefined : () => setEditing('name')}
+              right={<RowValue chevron={onUpdateUser !== undefined}><Text style={styles.value}>{user.username}</Text></RowValue>}
+              testID="user-account-edit-name"
+            />
+            <SettingsRow
+              accessibilityLabel="Picture"
+              label="Picture"
+              onPress={onUpdateUser === undefined ? undefined : () => setEditing('picture')}
+              right={<RowValue chevron={onUpdateUser !== undefined}><ProfileAvatar avatar={user.avatar} size={32} /></RowValue>}
+              testID="user-account-edit-picture"
+            />
+            <SettingsRow
+              label="Home folder"
+              right={<Text style={styles.value}>/home/{user.username}</Text>}
+              testID="user-account-home-row"
+            />
+          </SettingsSection>
         )}
 
         <SettingsSection
-          footer={others.length > 0 ? 'Each user has their own Linux and home. To use another user, log out; that stops every running app and shell first.' : undefined}
+          footer={others.length > 0 ? 'To use another user, log out. That stops every running app and shell first.' : undefined}
           testID="user-account-users"
           title={others.length > 0 ? 'OTHER USERS' : 'USERS'}>
           {others.map(other => (
@@ -91,7 +109,18 @@ export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onU
 }
 
 /** The signed-in user's hieroglyph and Linux username. The password stays as it is. */
-function EditUserCard({user, onSave, onSaved, onCancel}: Readonly<{
+/** A value on the right of a row, with a chevron when the row opens an editor. */
+function RowValue({children, chevron}: Readonly<{children: React.ReactNode; chevron: boolean}>): React.JSX.Element {
+  return (
+    <View style={styles.rowValue}>
+      {children}
+      {chevron ? <Text style={styles.chevron}>›</Text> : null}
+    </View>
+  );
+}
+
+function EditUserCard({mode, user, onSave, onSaved, onCancel}: Readonly<{
+  mode: 'name' | 'picture';
   user: ProfileUser;
   onSave: (user: ProfileUser) => Promise<SaveProfileResult>;
   onSaved: () => void;
@@ -119,22 +148,28 @@ function EditUserCard({user, onSave, onSaved, onCancel}: Readonly<{
 
   return (
     <View style={styles.card} testID="user-account-editor">
-      <AvatarPicker onChange={setAvatar} value={avatar} />
-      <TextInput
-        accessibilityLabel="Username"
-        autoCapitalize="none"
-        autoComplete="off"
-        autoCorrect={false}
-        maxLength={32}
-        onChangeText={setUsername}
-        placeholder="Username"
-        placeholderTextColor={uiColors.subdued}
-        style={styles.input}
-        testID="user-account-username"
-        value={username} />
-      <Text style={styles.note}>
-        {username === user.username ? `Your home is /home/${username}.` : `Your home becomes /home/${username}. Apps and shells already running keep the old name until they restart.`}
-      </Text>
+      {mode === 'picture' ? (
+        <AvatarPicker onChange={setAvatar} value={avatar} />
+      ) : (
+        <>
+          <TextInput
+            accessibilityLabel="Username"
+            autoCapitalize="none"
+            autoComplete="off"
+            autoCorrect={false}
+            autoFocus
+            maxLength={32}
+            onChangeText={setUsername}
+            placeholder="Username"
+            placeholderTextColor={uiColors.subdued}
+            style={styles.input}
+            testID="user-account-username"
+            value={username} />
+          <Text style={styles.note}>
+            {username === user.username ? `Your home is /home/${username}.` : `Your home becomes /home/${username}. Apps and shells already running keep the old name until they restart.`}
+          </Text>
+        </>
+      )}
       {error === undefined ? null : <Text style={styles.error} testID="user-account-edit-error">{error}</Text>}
       <View style={styles.editButtons}>
         <Pressable accessibilityRole="button" disabled={saving} onPress={onCancel} style={styles.cancel} testID="user-account-edit-cancel">
@@ -175,38 +210,39 @@ function LogoutSection({onLogout}: Readonly<{onLogout: () => Promise<boolean>}>)
     setFailed(!stopped);
   }, [armed, onLogout]);
 
+  const label = stopping ? 'Stopping…' : armed ? 'Tap again to log out' : 'Log out';
   return (
-    <SettingsSection
-      footer={failed ? 'Couldn’t stop every session. Try again.' : undefined}
-      footerTone="danger"
-      title="LOG OUT">
-      <SettingsRow
-        detail={armed ? 'Every running app and shell will be stopped.' : 'Stops all running apps and shells, then opens sign in.'}
-        label="Log out"
-        right={(
-          <SettingsAction
-            disabled={stopping}
-            label={stopping ? 'STOPPING…' : armed ? 'CONFIRM' : 'LOG OUT'}
-            onPress={() => { void press(); }}
-            testID="user-account-logout"
-            tone="danger"
-          />
-        )}
-        testID="user-account-logout-row"
-      />
-    </SettingsSection>
+    <View style={styles.logout}>
+      <View style={styles.logoutGroup}>
+        <Pressable
+          accessibilityLabel={label}
+          accessibilityRole="button"
+          disabled={stopping}
+          focusable={false}
+          onPress={() => { void press(); }}
+          style={styles.logoutRow}
+          testID="user-account-logout">
+          <Text style={styles.logoutText}>{label}</Text>
+        </Pressable>
+      </View>
+      <Text style={[styles.logoutNote, failed && styles.logoutFailed]}>
+        {failed ? 'Couldn’t stop every session. Try again.' : armed ? 'Every running app and shell will be stopped.' : 'Stops all apps and shells, then opens sign in.'}
+      </Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   content: {paddingHorizontal: 18, paddingBottom: 28},
-  signedIn: {marginTop: 22},
   card: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, paddingHorizontal: 18, paddingVertical: 24},
-  cardRow: {alignItems: 'center', flexDirection: 'row', gap: 16, paddingVertical: 18},
-  details: {flex: 1, minWidth: 0},
-  username: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800'},
-  distro: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 10, letterSpacing: 0.9, marginTop: 4},
-  home: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 11, marginTop: 6},
+  hero: {alignItems: 'center', paddingBottom: 6, paddingTop: 22},
+  username: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 22, fontWeight: '800', marginTop: 16},
+  meta: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 11, marginTop: 6},
+  editor: {marginTop: 22},
+  value: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11},
+  rowValue: {alignItems: 'center', flexDirection: 'row', gap: 10},
+  chevron: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 16},
+  distro: {color: uiColors.accent, letterSpacing: 0.9},
   input: {alignSelf: 'stretch', backgroundColor: uiColors.background, borderColor: uiColors.borderSoft, borderRadius: 8, borderWidth: 1, color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 14, marginTop: 16, minHeight: 48, paddingHorizontal: 12},
   note: {alignSelf: 'stretch', color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 8},
   error: {alignSelf: 'stretch', color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 16, marginTop: 8},
@@ -216,4 +252,10 @@ const styles = StyleSheet.create({
   save: {alignItems: 'center', backgroundColor: uiColors.accent, borderRadius: 8, flex: 1, justifyContent: 'center', minHeight: 44},
   saveIdle: {opacity: 0.4},
   saveText: {color: uiColors.background, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '900', letterSpacing: 0.6},
+  logout: {marginTop: 22},
+  logoutGroup: {backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, overflow: 'hidden'},
+  logoutRow: {alignItems: 'center', justifyContent: 'center', minHeight: 52},
+  logoutText: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 13, fontWeight: '800'},
+  logoutNote: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 9, lineHeight: 14, marginTop: 8, textAlign: 'center'},
+  logoutFailed: {color: uiColors.danger},
 });
