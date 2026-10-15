@@ -187,7 +187,7 @@ function EditUserCard({user, onSave, onSaved, onCancel}: Readonly<{
         testID="user-account-username"
         value={username} />
       <Text style={styles.note}>
-        {username === user.username ? `Your home is /home/${username}.` : `Your home becomes /home/${username}. Apps and shells already running keep the old name until they restart.`}
+        {username === user.username ? `Your home is /home/${username}.` : `Your home becomes /home/${username}; /home/${user.username} keeps working as a link to it. Apps and shells already running keep the old name until they restart.`}
       </Text>
       {error === undefined ? null : <Text style={styles.error} testID="user-account-edit-error">{error}</Text>}
       <View style={styles.editButtons}>

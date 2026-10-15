@@ -315,6 +315,27 @@ class ProotSessionLauncherTest {
       launcher(base, hostProc).interactiveShellLaunchSpec(rootfs, home, guestUsername = "nefer")
       assertEquals("root:x:0:0:root:/root:/bin/sh\nnefer:x:1000:1000:nefer:/home/nefer:/usr/local/bin/horus-ssh-shell\n", passwd.readText())
       assertEquals("root:x:0:\nnefer:x:1000:\n", group.readText())
+
+      // Saved absolute paths keep working: former names link to the current one.
+      val homes = File(rootfs, "home")
+      fun link(name: String) = Files.readSymbolicLink(File(homes, name).toPath()).toString()
+      assertEquals("nefer", link("vishesh"))
+      assertEquals("nefer", link("horus"))
+      assertTrue(File(homes, "nefer").isDirectory && !Files.isSymbolicLink(File(homes, "nefer").toPath()))
+
+      // Renaming back reuses the former name; its alias is replaced by a real mount point.
+      launcher(base, hostProc).interactiveShellLaunchSpec(rootfs, home, guestUsername = "vishesh")
+      assertFalse(Files.isSymbolicLink(File(homes, "vishesh").toPath()))
+      assertEquals("vishesh", link("nefer"))
+      assertEquals("vishesh", link("horus"))
+
+      // A directory with content is never replaced by a link.
+      File(homes, "keep").mkdirs(); File(homes, "keep/file").writeText("x")
+      passwd.writeText(passwd.readText().replace("vishesh:x:1000:1000:vishesh:/home/vishesh", "keep:x:1000:1000:keep:/home/keep"))
+      group.writeText(group.readText().replace("vishesh:x:1000", "keep:x:1000"))
+      shadow.writeText(shadow.readText().replace("vishesh:!", "keep:!"))
+      launcher(base, hostProc).interactiveShellLaunchSpec(rootfs, home, guestUsername = "ra")
+      assertEquals("x", File(homes, "keep/file").readText())
     } finally {
       base.deleteRecursively()
     }

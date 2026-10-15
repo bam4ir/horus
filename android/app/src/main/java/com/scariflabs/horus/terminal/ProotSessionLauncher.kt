@@ -689,7 +689,10 @@ class ProotSessionLauncher(
     if (!etc.isDirectory || Files.isSymbolicLink(etc.toPath())) {
       throw IllegalStateException("guest etc directory is missing")
     }
-    val home = File(rootfsDir, "home/$username")
+    val homeRoot = File(rootfsDir, "home")
+    val home = File(homeRoot, username)
+    // Renaming back to a former name reuses its alias; drop the link first.
+    if (isHomeAlias(home)) Files.delete(home.toPath())
     if (Files.isSymbolicLink(home.toPath()) || (home.exists() && !home.isDirectory)) {
       throw IllegalStateException("guest home directory is unavailable")
     }
@@ -708,6 +711,7 @@ class ProotSessionLauncher(
     var groupLines = originalGroupLines
     var shadowLines = originalShadowLines
     var migratedLegacyProfile = false
+    var formerUsername: String? = null
     val existingUser = passwdLines.firstOrNull { it.substringBefore(':') == username }
     if (existingUser != null) {
       val fields = existingUser.split(':')
@@ -730,6 +734,7 @@ class ProotSessionLauncher(
         if (!isFixedProfileIdentity(username, uid, gid)) {
           throw IllegalStateException("guest uid is already occupied")
         }
+        formerUsername = uidRows.singleOrNull()?.substringBefore(':')
         val migrated = migrateLegacyProfileAccount(passwdLines, groupLines, shadowLines, username)
         passwdLines = migrated.passwd
         groupLines = migrated.group
@@ -786,7 +791,40 @@ class ProotSessionLauncher(
     if (!home.exists() && !home.mkdirs() || !home.isDirectory) {
       throw IllegalStateException("guest home directory is unavailable")
     }
+    linkFormerHomes(homeRoot, formerUsername, username)
   }
+
+  /**
+   * After a rename, files that saved the old absolute path (virtualenvs,
+   * rc files, tool configs) keep working: /home/<former> becomes a relative
+   * link to the current name, and older aliases follow each later rename.
+   * Only an empty mount-point directory is ever replaced; anything with
+   * content is left alone. Running sessions keep their own bind instead.
+   */
+  private fun linkFormerHomes(homeRoot: File, former: String?, current: String) {
+    if (former != null && former != current && USERNAME_PATTERN.matches(former)) {
+      val old = File(homeRoot, former)
+      val path = old.toPath()
+      val replaceable = when {
+        Files.isSymbolicLink(path) -> isHomeAlias(old)
+        old.isDirectory -> old.list()?.isEmpty() == true
+        else -> !old.exists()
+      }
+      if (replaceable) {
+        Files.deleteIfExists(path)
+        Files.createSymbolicLink(path, java.nio.file.Paths.get(current))
+      }
+    }
+    homeRoot.listFiles()?.filter { isHomeAlias(it) && Files.readSymbolicLink(it.toPath()).toString() != current }?.forEach {
+      Files.delete(it.toPath())
+      Files.createSymbolicLink(it.toPath(), java.nio.file.Paths.get(current))
+    }
+  }
+
+  /** A link Horus made for a former name: a symlink to a bare sibling username. */
+  private fun isHomeAlias(file: File): Boolean =
+    Files.isSymbolicLink(file.toPath()) &&
+      runCatching { Files.readSymbolicLink(file.toPath()).toString() }.getOrNull()?.let { it != "." && it != ".." && USERNAME_PATTERN.matches(it) } == true
 
   private data class GuestAccountLines(
     val passwd: List<String>,
@@ -1754,6 +1792,12 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
           exit 21
         fi
       fi
+      # sudo's root helper is Python. The Bare terminal installs it with its
+      # tools; install it with whatever opens first, so sudo works from the
+      # first sign-in. A failure leaves sudo unavailable, not the app.
+      if [ "${'$'}target" != shell ] && [ ! -x /usr/bin/python3 ]; then
+        pkg_install /root/.cache/horus/alpine-bootstrap.log python3 || true
+      fi
       mark_provision_stage base_ready
 
       target_marker=/root/.cache/horus/${'$'}target.ready
@@ -2017,7 +2061,8 @@ EOF
       mkdir -p /root/.cache/horus
       if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ] ||
         { [ ! -x /usr/lib/ssh/sftp-server ] && [ ! -x /usr/lib/openssh/sftp-server ]; } ||
-        [ ! -x /usr/bin/scp ] || [ ! -x /usr/bin/rsync ] || ! command -v zsh >/dev/null 2>&1; then
+        [ ! -x /usr/bin/scp ] || [ ! -x /usr/bin/rsync ] || ! command -v zsh >/dev/null 2>&1 ||
+        [ ! -x /usr/bin/python3 ]; then
         stage installing
         if [ -x /usr/bin/apt-get ]; then
           mkdir -p /etc/apt/apt.conf.d
@@ -2025,10 +2070,11 @@ EOF
             printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Dpkg::Use-Pty "0";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
           remote_install() {
             DEBIAN_FRONTEND=noninteractive apt-get update &&
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dropbear-bin openssh-client openssh-sftp-server rsync zsh
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dropbear-bin openssh-client openssh-sftp-server python3 rsync zsh
           }
         else
-          remote_install() { apk add --no-cache --no-progress dropbear openssh-client-default openssh-sftp-server rsync zsh; }
+          # python3 runs sudo's root helper for SSH logins.
+          remote_install() { apk add --no-cache --no-progress dropbear openssh-client-default openssh-sftp-server python3 rsync zsh; }
         fi
         if ! remote_install; then
           if [ ! -x /usr/sbin/dropbear ] || [ ! -x /usr/bin/dropbearkey ]; then
