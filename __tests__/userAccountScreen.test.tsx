@@ -19,24 +19,21 @@ async function render(element: React.ReactElement) {
 describe('UserAccountScreen', () => {
   test('shows the signed-in user and offers to add the missing distribution', async () => {
     const onAddUser = jest.fn();
-    const onSwitchUser = jest.fn();
-    const {renderer, find} = await render(<UserAccountScreen onAddUser={onAddUser} onBack={() => undefined} onSwitchUser={onSwitchUser} user={ALPINE} users={[ALPINE]} />);
+    const {renderer, find} = await render(<UserAccountScreen onAddUser={onAddUser} onBack={() => undefined} user={ALPINE} users={[ALPINE]} />);
     expect(find('user-account-name')[0].props.children).toBe('horus');
     expect(find('user-account-home')[0].props.children).toEqual(['/home/', 'horus']);
-    // Nobody to switch to yet.
-    expect(find('user-account-switch')).toHaveLength(0);
     await ReactTestRenderer.act(async () => { find('user-account-add-user')[0].props.onPress(); });
     expect(onAddUser).toHaveBeenCalledTimes(1);
 
     await ReactTestRenderer.act(async () => {
-      renderer.update(<UserAccountScreen onAddUser={onAddUser} onBack={() => undefined} onSwitchUser={onSwitchUser} user={ALPINE} users={[ALPINE, DEBIAN]} />);
+      renderer.update(<UserAccountScreen onAddUser={onAddUser} onBack={() => undefined} user={ALPINE} users={[ALPINE, DEBIAN]} />);
     });
     expect(find('user-account-add-user')).toHaveLength(0);
     // The signed-in user is the card; the list holds the others.
     expect(find('user-account-user-alpine')).toHaveLength(0);
     expect(find('user-account-user-debian')[0].props.detail).toBe('Debian · /home/deb');
-    await ReactTestRenderer.act(async () => { find('user-account-switch')[0].props.onPress(); });
-    expect(onSwitchUser).toHaveBeenCalledTimes(1);
+    // Changing users goes through log out, which stops every session.
+    expect(find('user-account-switch')).toHaveLength(0);
     await ReactTestRenderer.act(async () => { renderer.unmount(); });
   });
 
@@ -63,7 +60,7 @@ describe('UserAccountScreen', () => {
     const onUpdateUser = jest.fn(async () => ({kind: 'success'} as const));
     const {renderer, find} = await render(<UserAccountScreen onBack={() => undefined} onUpdateUser={onUpdateUser} user={ALPINE} users={[ALPINE, DEBIAN]} />);
     // The other user is listed but has no editor of its own.
-    expect(find('user-account-user-debian')[0].props.right).toBeDefined();
+    expect(find('user-account-user-debian')[0].props.leading).toBeDefined();
     await ReactTestRenderer.act(async () => { find('user-account-edit')[0].props.onPress(); });
     expect(find('user-account-editor').length).toBeGreaterThan(0);
     expect(find('user-account-edit-save')[0].props.disabled).toBe(true);

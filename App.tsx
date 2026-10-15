@@ -275,14 +275,6 @@ function App(): React.JSX.Element {
     setRoute('login');
   }, []);
 
-  // Switching users locks like the background lock; sessions keep running.
-  const switchUser = React.useCallback(() => {
-    setProfileError(undefined);
-    setLockNotice(undefined);
-    void updateUnlockGrant('revoke');
-    setRoute(__DEV__ ? 'home' : 'login');
-  }, []);
-
   // Logging out ends every session, unlike the background lock.
   const logout = React.useCallback(async (): Promise<boolean> => {
     const stopped = await sessionClient.stopAllTerminalSessions(nextSessionRequestId('logout'), 'user_stop');
@@ -649,7 +641,6 @@ function App(): React.JSX.Element {
         onAddUser={() => setRoute('add-user')}
         onBack={() => setRoute('home')}
         onLogout={logout}
-        onSwitchUser={switchUser}
         onUpdateUser={async updated => {
           const result = await updateUserProfile(updated);
           if (result.kind === 'success') {

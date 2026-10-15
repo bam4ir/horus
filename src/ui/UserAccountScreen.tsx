@@ -6,7 +6,7 @@ import {InteractivePressable as Pressable} from './InteractivePressable';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BrandBackButton, BrandHeader, uiColors} from './brand';
 import {ProfileAvatar} from './ProfileAvatar';
-import {SettingsAction, SettingsRow, SettingsSection} from './SettingsList';
+import {SettingsAction, SettingsRow, SettingsSection, SettingsSectionTitle} from './SettingsList';
 import {UI_FONT_FAMILY} from './typography';
 import {useHardwareBack} from './useHardwareBack';
 
@@ -18,8 +18,6 @@ export type UserAccountScreenProps = Readonly<{
   onBack: () => void;
   /** Opens the flow that adds the user for the distribution without one. */
   onAddUser?: () => void;
-  /** Locks Horus for the sign-in screen; running sessions keep going. */
-  onSwitchUser?: () => void;
   /** Stops every running session and returns to sign in; false if the stop failed. */
   onLogout?: () => Promise<boolean>;
   /** Saves a new username or avatar for the signed-in user. */
@@ -27,7 +25,7 @@ export type UserAccountScreenProps = Readonly<{
 }>;
 
 /** Everything about Linux users, opened from the user card on the home screen. */
-export function UserAccountScreen({user, users, onBack, onAddUser, onSwitchUser, onLogout, onUpdateUser}: UserAccountScreenProps): React.JSX.Element {
+export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onUpdateUser}: UserAccountScreenProps): React.JSX.Element {
   const [editing, setEditing] = React.useState(false);
   // Back leaves the editor first, then the screen.
   useHardwareBack(true, editing ? () => setEditing(false) : onBack);
@@ -44,43 +42,38 @@ export function UserAccountScreen({user, users, onBack, onAddUser, onSwitchUser,
           action={<BrandBackButton onPress={onBack} testID="user-account-back" />}
         />
 
+        <View style={styles.signedIn}>
+          <SettingsSectionTitle title={editing ? 'EDIT YOUR ACCOUNT' : 'SIGNED IN AS'} />
+        </View>
         {editing && onUpdateUser !== undefined ? (
           <EditUserCard onCancel={() => setEditing(false)} onSave={onUpdateUser} onSaved={() => setEditing(false)} user={user} />
         ) : (
-          <View style={styles.card} testID="user-account-card">
+          <View style={[styles.card, styles.cardRow]} testID="user-account-card">
             <ProfileAvatar avatar={user.avatar} selected size={72} />
-            <Text numberOfLines={1} style={styles.username} testID="user-account-name">{user.username}</Text>
-            <Text style={styles.distro}>{DISTRO_NAMES[user.distro].toUpperCase()}</Text>
-            <Text style={styles.home} testID="user-account-home">/home/{user.username}</Text>
+            <View style={styles.details}>
+              <Text numberOfLines={1} style={styles.username} testID="user-account-name">{user.username}</Text>
+              <Text style={styles.distro}>{DISTRO_NAMES[user.distro].toUpperCase()}</Text>
+              <Text numberOfLines={1} style={styles.home} testID="user-account-home">/home/{user.username}</Text>
+            </View>
             {onUpdateUser === undefined ? null : (
-              <View style={styles.editAction}>
-                <SettingsAction label="EDIT" onPress={() => setEditing(true)} testID="user-account-edit" />
-              </View>
+              <SettingsAction label="EDIT" onPress={() => setEditing(true)} testID="user-account-edit" />
             )}
           </View>
         )}
 
         <SettingsSection
-          footer={others.length > 0 ? 'Each user has their own Linux and home. Switching keeps running sessions going.' : undefined}
+          footer={others.length > 0 ? 'Each user has their own Linux and home. To use another user, log out; that stops every running app and shell first.' : undefined}
           testID="user-account-users"
-          title="USERS">
+          title={others.length > 0 ? 'OTHER USERS' : 'USERS'}>
           {others.map(other => (
             <SettingsRow
               key={other.distro}
               detail={`${DISTRO_NAMES[other.distro]} · /home/${other.username}`}
               label={other.username}
-              right={<ProfileAvatar avatar={other.avatar} size={36} />}
+              leading={<ProfileAvatar avatar={other.avatar} size={36} />}
               testID={`user-account-user-${other.distro}`}
             />
           ))}
-          {others.length === 0 || onSwitchUser === undefined ? null : (
-            <SettingsRow
-              detail="Locks Horus and opens sign in."
-              label="Switch user"
-              right={<SettingsAction label="SWITCH" onPress={onSwitchUser} testID="user-account-switch" />}
-              testID="user-account-switch-row"
-            />
-          )}
           {missing === undefined || onAddUser === undefined ? null : (
             <SettingsRow
               detail={missing === 'debian' ? 'glibc and apt, for tools Alpine can’t run. Experimental.' : 'Small and fast, with musl and apk.'}
@@ -188,7 +181,7 @@ function LogoutSection({onLogout}: Readonly<{onLogout: () => Promise<boolean>}>)
       footerTone="danger"
       title="LOG OUT">
       <SettingsRow
-        detail={armed ? 'Every running app and shell will be stopped.' : 'Stops all running apps and shells, then locks Horus.'}
+        detail={armed ? 'Every running app and shell will be stopped.' : 'Stops all running apps and shells, then opens sign in.'}
         label="Log out"
         right={(
           <SettingsAction
@@ -207,11 +200,13 @@ function LogoutSection({onLogout}: Readonly<{onLogout: () => Promise<boolean>}>)
 
 const styles = StyleSheet.create({
   content: {paddingHorizontal: 18, paddingBottom: 28},
-  card: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, marginTop: 8, paddingHorizontal: 18, paddingVertical: 24},
-  username: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', marginTop: 12},
+  signedIn: {marginTop: 22},
+  card: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, paddingHorizontal: 18, paddingVertical: 24},
+  cardRow: {alignItems: 'center', flexDirection: 'row', gap: 16, paddingVertical: 18},
+  details: {flex: 1, minWidth: 0},
+  username: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800'},
   distro: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 10, letterSpacing: 0.9, marginTop: 4},
-  home: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 11, marginTop: 8},
-  editAction: {marginTop: 16},
+  home: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 11, marginTop: 6},
   input: {alignSelf: 'stretch', backgroundColor: uiColors.background, borderColor: uiColors.borderSoft, borderRadius: 8, borderWidth: 1, color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 14, marginTop: 16, minHeight: 48, paddingHorizontal: 12},
   note: {alignSelf: 'stretch', color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 8},
   error: {alignSelf: 'stretch', color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 16, marginTop: 8},
