@@ -96,7 +96,7 @@ export function AddUserScreen({existingUsers, onBack, onCreated, actions = DEFAU
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <BrandHeader
           action={busy ? null : <BrandBackButton onPress={onBack} testID="add-user-back" />}
-          eyebrow="SETTINGS / USERS"
+          eyebrow="ACCOUNT / USERS"
           meta={null}
           title={distro === undefined ? 'Users' : `New ${DISTRO_NAMES[distro]} user`}
         />
