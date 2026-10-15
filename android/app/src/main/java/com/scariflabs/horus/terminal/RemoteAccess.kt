@@ -222,37 +222,56 @@ object RemoteAccess {
      * removes every per-home copy.
      */
     fun prepareHostKey(activeHome: File): File = synchronized(lock) {
-      if (Files.isSymbolicLink(hostKeyDir.toPath()) || Files.isSymbolicLink(hostKey.toPath())) {
-        throw IllegalStateException("host key path is a symbolic link")
-      }
+      if (Files.isSymbolicLink(hostKeyDir.toPath())) throw IllegalStateException("host key directory is a symbolic link")
       if (!hostKeyDir.isDirectory && !hostKeyDir.mkdirs()) throw IllegalStateException("cannot create host key directory")
-      if (!hostKey.isFile || hostKey.length() == 0L) {
-        val legacy = legacyHostKey(activeHome)
-        if (legacy != null && legacy.isFile && legacy.length() in 1..MAX_HOST_KEY_BYTES) {
-          val temp = File(hostKeyDir, ".${hostKey.name}.tmp")
-          temp.delete()
-          legacy.copyTo(temp)
-          temp.setReadable(false, false); temp.setReadable(true, true)
-          temp.setWritable(false, false); temp.setWritable(true, true)
-          Files.move(temp.toPath(), hostKey.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-        }
+      // Keep the server's key a plain file; adopt 1.0.4's when there is none.
+      val key = readKey(hostKey) ?: legacyKeyDir(activeHome)?.let { readKey(File(it, HOST_KEY_NAME)) }
+      if (key != null && (Files.isSymbolicLink(hostKey.toPath()) || !hostKey.isFile)) {
+        val temp = File(hostKeyDir, ".${hostKey.name}.tmp")
+        Files.deleteIfExists(temp.toPath())
+        temp.writeBytes(key)
+        temp.setReadable(false, false); temp.setReadable(true, true)
+        temp.setWritable(false, false); temp.setWritable(true, true)
+        Files.move(temp.toPath(), hostKey.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
       }
       // A key the server will not use should not sit where agents read it.
-      (paths.userHomes() + activeHome).distinct().mapNotNull(::legacyHostKey).forEach { it.delete() }
+      (paths.userHomes() + activeHome).distinct().mapNotNull(::legacyKeyDir).forEach(::deleteKeyFiles)
       hostKeyDir
     }
 
     /** A home reset gives the phone a new identity, as it did when the key lived there. */
     fun deleteHostKey() = synchronized(lock) {
-      hostKeyDir.listFiles()?.forEach(File::delete)
+      if (!Files.isSymbolicLink(hostKeyDir.toPath())) deleteKeyFiles(hostKeyDir)
     }
 
-    /** The 1.0.4 location, when it is a plain file and nothing on the way is a link. */
-    private fun legacyHostKey(home: File): File? {
+    /** 1.0.4's key directory in [home], when nothing on the way is a link. */
+    private fun legacyKeyDir(home: File): File? {
       val config = File(home, ".config")
       val dir = File(config, "horus")
-      val key = File(dir, HOST_KEY_NAME)
-      return key.takeIf { listOf(home, config, dir, key).none { Files.isSymbolicLink(it.toPath()) } && it.exists() }
+      return dir.takeIf { listOf(home, config, dir).none { Files.isSymbolicLink(it.toPath()) } && it.isDirectory }
+    }
+
+    /**
+     * dropbearkey publishes its key with link(2), which PRoot emulates as a
+     * symlink chain into its backing store (beside the key, or the shared
+     * store). Follow a link only when it ends in one of those places, so a
+     * link the guest plants cannot pull another app file into the key.
+     */
+    private fun readKey(file: File): ByteArray? {
+      if (!Files.exists(file.toPath())) return null
+      val real = runCatching { file.toPath().toRealPath() }.getOrNull() ?: return null
+      val allowed = listOfNotNull(file.parentFile, paths.hardlinks).map { it.canonicalFile.toPath() }
+      if (allowed.none { real.parent == it }) return null
+      val size = Files.size(real)
+      if (size !in 1..MAX_HOST_KEY_BYTES) return null
+      return Files.readAllBytes(real)
+    }
+
+    /** Unlinks the key, its .pub, and PRoot's link entries beside them; never follows links. */
+    private fun deleteKeyFiles(dir: File) {
+      dir.listFiles()?.filter {
+        it.name == HOST_KEY_NAME || it.name == "$HOST_KEY_NAME.pub" || it.name.startsWith(".l2s.$HOST_KEY_NAME")
+      }?.forEach { Files.deleteIfExists(it.toPath()) }
     }
 
     /** Copies the paired keys into a user home created after they were added. */

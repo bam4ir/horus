@@ -237,16 +237,28 @@ class RemoteAccessTest {
       val alpine = paths.homeFor(RootfsCatalog.DISTRO_ALPINE)
       val debian = paths.homeFor(RootfsCatalog.DISTRO_DEBIAN)
       fun legacy(home: File) = File(home, ".config/horus/${RemoteAccess.HOST_KEY_NAME}")
-      legacy(alpine).apply { parentFile!!.mkdirs(); writeText("alpine key") }
-      legacy(debian).apply { parentFile!!.mkdirs(); writeText("debian key") }
+      // What 1.0.4 left: dropbearkey's link(2) as PRoot's source ->
+      // intermediate -> backing chain beside the key.
+      fun emulatedKey(home: File, content: String) {
+        val key = legacy(home)
+        val dir = key.parentFile!!.apply { mkdirs() }
+        val intermediate = File(dir, ".l2s.${key.name}.tmp1230001")
+        val backing = File(dir, "${intermediate.name}.0001").apply { writeText(content) }
+        Files.createSymbolicLink(intermediate.toPath(), backing.toPath())
+        Files.createSymbolicLink(key.toPath(), intermediate.toPath())
+      }
+      emulatedKey(alpine, "alpine key")
+      emulatedKey(debian, "debian key")
       val store = RemoteAccess.Store(base)
 
       // Computers paired while Debian was active keep trusting the phone.
       val dir = store.prepareHostKey(debian)
       val shared = File(dir, RemoteAccess.HOST_KEY_NAME)
       assertEquals("debian key", shared.readText())
-      assertFalse(legacy(alpine).exists())
-      assertFalse(legacy(debian).exists())
+      assertFalse(Files.isSymbolicLink(shared.toPath()))
+      for (home in listOf(alpine, debian)) {
+        assertTrue(legacy(home).parentFile!!.listFiles()!!.isEmpty())
+      }
       assertFalse(dir.canonicalPath.startsWith(alpine.canonicalPath))
 
       // Switching users keeps the identity; a key a guest plants is removed, not adopted.
@@ -255,9 +267,23 @@ class RemoteAccessTest {
       assertEquals("debian key", shared.readText())
       assertFalse(legacy(alpine).exists())
 
-      // A home reset gives the phone a new identity.
+      // A key generated through PRoot's shared store becomes a plain file.
       store.deleteHostKey()
+      val backing = File(paths.hardlinks.apply { mkdirs() }, ".l2s.${RemoteAccess.HOST_KEY_NAME}.new0001.0001").apply { writeText("generated") }
+      Files.createSymbolicLink(shared.toPath(), backing.toPath())
+      store.prepareHostKey(alpine)
+      assertFalse(Files.isSymbolicLink(shared.toPath()))
+      assertEquals("generated", shared.readText())
+
+      // A link the guest plants to another app file is never adopted.
+      store.deleteHostKey()
+      val secret = File(base, "remote-access/status").apply { parentFile!!.mkdirs(); writeText("app private") }
+      legacy(alpine).parentFile!!.mkdirs()
+      Files.createSymbolicLink(legacy(alpine).toPath(), secret.toPath())
+      store.prepareHostKey(alpine)
       assertFalse(shared.exists())
+      assertFalse(Files.isSymbolicLink(legacy(alpine).toPath()))
+      assertEquals("app private", secret.readText())
 
       val hostProc = File(base, "proc").apply { mkdirs() }
       File(hostProc, "stat").writeText("cpu 1\n")

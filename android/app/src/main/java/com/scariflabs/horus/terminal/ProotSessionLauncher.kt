@@ -2046,11 +2046,16 @@ EOF
       hostkey="${'$'}keydir/ssh_host_ed25519_key"
       mkdir -p "${'$'}keydir" "${'$'}home/.ssh" "${'$'}home/.cache/horus"
       if [ ! -s "${'$'}hostkey" ]; then
-        rm -f "${'$'}hostkey"
-        if ! dropbearkey -t ed25519 -f "${'$'}hostkey" >/dev/null 2>&1; then
+        rm -f "${'$'}hostkey" "${'$'}hostkey.new"
+        # dropbearkey publishes with link(2), which PRoot turns into a
+        # symlink chain. Copy the key in so the app finds a plain file.
+        if ! dropbearkey -t ed25519 -f "${'$'}hostkey.new" >/dev/null 2>&1 ||
+          ! cat "${'$'}hostkey.new" > "${'$'}hostkey.tmp" || ! mv -f "${'$'}hostkey.tmp" "${'$'}hostkey"; then
+          rm -f "${'$'}hostkey.new" "${'$'}hostkey.tmp"
           stage hostkey_failed
           exit 31
         fi
+        rm -f "${'$'}hostkey.new" "${'$'}hostkey.new.pub"
       fi
       touch "${'$'}home/.ssh/authorized_keys"
       chown "${'$'}uid:${'$'}gid" "${'$'}home" "${'$'}home/.ssh" "${'$'}home/.ssh/authorized_keys" "${'$'}keydir" "${'$'}hostkey" 2>/dev/null || true
@@ -2123,9 +2128,17 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
           curl --connect-timeout 15 --max-time 300 -fsSL https://claude.ai/install.sh -o "${'$'}cache/claude-install.sh" &&
           bash "${'$'}cache/claude-install.sh"
       }
+      # Debian's Node.js comes from the app tile's root provisioning. Say so
+      # rather than blaming the connection.
+      node_packages() {
+        if test -x /usr/bin/node && command -v npm >/dev/null 2>&1; then return 0; fi
+        system_packages bash ca-certificates git nodejs npm libgcc libstdc++ || return 1
+        if test -x /usr/bin/node && command -v npm >/dev/null 2>&1; then return 0; fi
+        printf '%s needs Node.js, which an SSH login cannot install here. Open %s once in the Horus app, then try again.\n' "${'$'}name" "${'$'}name" >&2
+        exit 1
+      }
       install_npm_agent() {
-        system_packages bash ca-certificates git nodejs npm libgcc libstdc++ &&
-          command -v npm >/dev/null 2>&1 &&
+        node_packages &&
           npm install --global --force --prefix "${'$'}HOME/.local" --no-package-lock --no-audit --no-fund --no-progress --loglevel=error "${'$'}1"
       }
       # npm's bin links lose their execute bit under PRoot; launch the entry
@@ -2137,10 +2150,7 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
       }
 ${CODEX_INSTALL_SCRIPT.prependIndent("      ")}
       install_codex() {
-        if ! test -x /usr/bin/node || ! command -v npm >/dev/null 2>&1; then
-          system_packages bash ca-certificates git nodejs npm libgcc libstdc++ || return 1
-        fi
-        test -x /usr/bin/node && install_codex_package && write_launcher /usr/bin/node '${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js'
+        node_packages && install_codex_package && write_launcher /usr/bin/node '${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js'
       }
       install_opencode() {
         install_npm_agent opencode-ai || return 1
