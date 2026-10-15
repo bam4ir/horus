@@ -234,68 +234,71 @@ class DistroStoreCore(
     // active record or a complete-but-unreferenced version — never a
     // manifest-less version. Reinstalling the active id never removes the
     // currently referenced rootfs before the replacement is known-good.
+    val versionDir = paths.versionDir(rootfsId)
+    fun success() = InstallOutcome.Success(
+      rootfsId = rootfsId,
+      archiveBytes = archiveToUse.length(),
+      archiveSha256 = expectedSha256,
+      extraction = summary,
+      probe = probe,
+      reusedCachedArchive = reusedCache,
+      durationMs = clock() - startedAt,
+    )
+    if (readActiveRecord()?.rootfsId == rootfsId && versionDir.isDirectory) {
+      try {
+        deleteTreeIfPresent(staging)
+      } catch (error: IOException) {
+        return InstallOutcome.Failure(rootfsId, "promote", "staging_cleanup_failed", error.message ?: "cannot clear staging")
+      }
+      return success()
+    }
+    fun promote(): InstallOutcome {
+      val replacement = paths.versionReplacement(rootfsId)
+      try {
+        deleteTreeIfPresent(replacement)
+        if (versionDir.exists() && !versionDir.renameTo(replacement)) {
+          throw IOException("cannot stage the existing versions/$rootfsId for replacement")
+        }
+        if (!staging.renameTo(versionDir)) {
+          if (replacement.exists() && !replacement.renameTo(versionDir)) {
+            throw IOException("cannot roll back versions/$rootfsId after promotion failure")
+          }
+          throw IOException("cannot rename staging into versions/$rootfsId")
+        }
+      } catch (error: IOException) {
+        deleteQuietly(staging)
+        return InstallOutcome.Failure(rootfsId, "promote", "promote_failed", error.message ?: "cannot promote version")
+      }
+      try {
+        if (makeActive) writeJsonAtomically(paths.activeRecord, record.toJson())
+      } catch (error: IOException) {
+        deleteQuietly(versionDir)
+        if (replacement.exists() && !replacement.renameTo(versionDir)) {
+          return InstallOutcome.Failure(rootfsId, "promote", "rollback_failed", "active record write failed and version rollback failed")
+        }
+        return InstallOutcome.Failure(rootfsId, "promote", "manifest_write_failed", error.message ?: "manifest failure")
+      }
+      deleteQuietly(replacement)
+      return success()
+    }
+    // Only replacing an existing version can pull a rootfs out from under a
+    // running session, so only that waits for sessions to stop. A new
+    // version (e.g. a second user's distribution) promotes beside them.
+    if (!versionDir.exists()) return promote()
     return try {
       withHardlinkLock {
-        val activeBefore = readActiveRecord()
-        val versionDir = paths.versionDir(rootfsId)
-        if (activeBefore?.rootfsId == rootfsId && versionDir.isDirectory) {
-          try {
-            deleteTreeIfPresent(staging)
-          } catch (error: IOException) {
-            return@withHardlinkLock InstallOutcome.Failure(rootfsId, "promote", "staging_cleanup_failed", error.message ?: "cannot clear staging")
-          }
-          return@withHardlinkLock InstallOutcome.Success(
-            rootfsId = rootfsId,
-            archiveBytes = archiveToUse.length(),
-            archiveSha256 = expectedSha256,
-            extraction = summary,
-            probe = probe,
-            reusedCachedArchive = reusedCache,
-            durationMs = clock() - startedAt,
-          )
+        promote().also {
+          // Collection failure must not turn a committed installation into a
+          // reported install failure. A later lifecycle operation retries it.
+          if (it is InstallOutcome.Success) runCatching { pruneHardlinkBacking() }
         }
-        val replacement = paths.versionReplacement(rootfsId)
-        try {
-          deleteTreeIfPresent(replacement)
-          if (versionDir.exists() && !versionDir.renameTo(replacement)) {
-            throw IOException("cannot stage the existing versions/$rootfsId for replacement")
-          }
-          if (!staging.renameTo(versionDir)) {
-            if (replacement.exists() && !replacement.renameTo(versionDir)) {
-              throw IOException("cannot roll back versions/$rootfsId after promotion failure")
-            }
-            throw IOException("cannot rename staging into versions/$rootfsId")
-          }
-        } catch (error: IOException) {
-          deleteQuietly(staging)
-          return@withHardlinkLock InstallOutcome.Failure(rootfsId, "promote", "promote_failed", error.message ?: "cannot promote version")
-        }
-        try {
-          if (makeActive) writeJsonAtomically(paths.activeRecord, record.toJson())
-        } catch (error: IOException) {
-          deleteQuietly(versionDir)
-          if (replacement.exists() && !replacement.renameTo(versionDir)) {
-            return@withHardlinkLock InstallOutcome.Failure(rootfsId, "promote", "rollback_failed", "active record write failed and version rollback failed")
-          }
-          return@withHardlinkLock InstallOutcome.Failure(rootfsId, "promote", "manifest_write_failed", error.message ?: "manifest failure")
-        }
-        deleteQuietly(replacement)
-        // Collection failure must not turn a committed installation into a
-        // reported install failure. A later lifecycle operation retries it.
-        runCatching { pruneHardlinkBacking() }
-        return@withHardlinkLock InstallOutcome.Success(
-          rootfsId = rootfsId,
-          archiveBytes = archiveToUse.length(),
-          archiveSha256 = expectedSha256,
-          extraction = summary,
-          probe = probe,
-          reusedCachedArchive = reusedCache,
-          durationMs = clock() - startedAt,
-        )
       }
+    } catch (error: RuntimeBusyException) {
+      deleteQuietly(staging)
+      InstallOutcome.Failure(rootfsId, "promote", "runtime_busy", error.message ?: "runtime is in use")
     } catch (error: IOException) {
       deleteQuietly(staging)
-      InstallOutcome.Failure(rootfsId, "promote", "storage_busy", error.message ?: "storage unavailable")
+      InstallOutcome.Failure(rootfsId, "promote", "promote_failed", error.message ?: "storage unavailable")
     }
   }
 
@@ -408,7 +411,8 @@ class DistroStoreCore(
         throw IOException("cannot recreate workspaces")
       }
     }
-    pruneHardlinkBacking()
+    // The reset itself is done; a failed scan only defers reclamation.
+    runCatching { pruneHardlinkBacking() }
     ResetResult(removedVersions, removedHome, removedWorkspaces)
   }
 
@@ -417,7 +421,7 @@ class DistroStoreCore(
     ensureLayout()
     FileChannel.open(File(paths.hardlinks, ".gc.lock").toPath(), WRITE, CREATE, NOFOLLOW_LINKS).use { channel ->
       val lock = try { channel.tryLock() } catch (_: OverlappingFileLockException) { null }
-        ?: throw IOException("runtime is in use; stop active sessions and SSH access, then retry")
+        ?: throw RuntimeBusyException()
       lock.use { return action() }
     }
   }
@@ -436,11 +440,19 @@ class DistroStoreCore(
     }
     if (candidates.isEmpty()) return
     val live = mutableSetOf<Path>()
+    // Candidates are canonical. A link written through another spelling of
+    // the same directory (/data/user/0 vs /data/data) must still match, or
+    // its live backing would be collected. Only the parent is resolved.
+    fun canonical(path: Path): Path {
+      val absolute = path.toAbsolutePath().normalize()
+      val parent = absolute.parent ?: return absolute
+      return runCatching { parent.toRealPath().resolve(absolute.fileName) }.getOrDefault(absolute)
+    }
     fun mark(path: Path) {
-      var current = path.toAbsolutePath().normalize()
+      var current = canonical(path)
       while (current in candidates && live.add(current)) {
         if (!Files.isSymbolicLink(current)) break
-        current = current.parent.resolve(Files.readSymbolicLink(current)).normalize()
+        current = canonical(current.parent.resolve(Files.readSymbolicLink(current)))
       }
     }
     Files.walkFileTree(paths.base.canonicalFile.toPath(), object : java.nio.file.SimpleFileVisitor<Path>() {
@@ -467,6 +479,9 @@ class DistroStoreCore(
       if (!Files.isDirectory(entry, NOFOLLOW_LINKS)) Files.deleteIfExists(entry)
     }
   }
+
+  /** A session or SSH server holds PRoot's shared lease on the hardlink store. */
+  class RuntimeBusyException : IOException("runtime is in use; stop active sessions and SSH access, then retry")
 
   data class ResetResult(
     val removedVersionIds: List<String>,

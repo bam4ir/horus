@@ -58,6 +58,7 @@ export const TERMINAL_RUNTIME_ERROR_CODES = [
   'extraction_failed',
   'probe_failed',
   'promote_failed',
+  'runtime_busy',
   'session_not_found',
   'session_limit_reached',
   'session_exited',
@@ -87,6 +88,7 @@ export type TerminalRuntimeErrorCode =
   | 'extraction_failed'
   | 'probe_failed'
   | 'promote_failed'
+  | 'runtime_busy'
   | 'session_not_found'
   | 'session_limit_reached'
   | 'session_exited'

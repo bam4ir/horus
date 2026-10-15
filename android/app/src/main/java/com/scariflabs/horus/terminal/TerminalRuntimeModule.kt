@@ -669,7 +669,7 @@ class TerminalRuntimeModule(
     "download" -> if (failure.reasonCode == "digest_mismatch" || failure.reasonCode == "size_mismatch") "digest_mismatch" else "download_failed"
     "extract" -> "extraction_failed"
     "probe" -> "probe_failed"
-    "promote" -> "promote_failed"
+    "promote" -> if (failure.reasonCode == "runtime_busy") "runtime_busy" else "promote_failed"
     else -> "internal_error"
   }
 
@@ -723,6 +723,9 @@ class TerminalRuntimeModule(
           deleteWorkspaces = scope == TerminalRuntimeContract.RESET_SCOPE_WORKSPACE ||
             scope == TerminalRuntimeContract.RESET_SCOPE_ALL_USER_DATA,
         )
+      } catch (_: DistroStoreCore.RuntimeBusyException) {
+        promise.resolve(resetError(requestId, "runtime_busy"))
+        return
       } catch (_: Exception) {
         promise.resolve(resetError(requestId, "internal_error"))
         return

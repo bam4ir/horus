@@ -164,12 +164,25 @@ class DistroStoreCoreTest {
     val store = newStore()
     assertTrue(store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong()) is DistroStoreCore.InstallOutcome.Success)
     val active = store.readActiveRecord()
-    java.nio.channels.FileChannel.open(File(store.storage.hardlinks, ".gc.lock").toPath(), java.nio.file.StandardOpenOption.READ).use { channel ->
+    // PRoot creates the lease file as it takes the shared lock.
+    java.nio.channels.FileChannel.open(
+      File(store.storage.hardlinks, ".gc.lock").toPath(),
+      java.nio.file.StandardOpenOption.READ, java.nio.file.StandardOpenOption.WRITE, java.nio.file.StandardOpenOption.CREATE,
+    ).use { channel ->
       channel.lock(0, Long.MAX_VALUE, true).use {
-        try { store.reset(deleteHome = true, deleteWorkspaces = true); throw AssertionError("live reset accepted") } catch (_: IOException) { }
+        try { store.reset(deleteHome = true, deleteWorkspaces = true); throw AssertionError("live reset accepted") } catch (_: DistroStoreCore.RuntimeBusyException) { }
+        File(store.storage.versionDir(AlpineRootfsCatalog.ROOTFS_ID), "replaced").writeText("")
+        store.storage.activeRecord.delete()
         val result = store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
-        assertEquals("storage_busy", (result as DistroStoreCore.InstallOutcome.Failure).reasonCode)
+        assertEquals("runtime_busy", (result as DistroStoreCore.InstallOutcome.Failure).reasonCode)
+        assertTrue(File(store.storage.versionDir(AlpineRootfsCatalog.ROOTFS_ID), "replaced").exists())
+        assertTrue(store.activate(AlpineRootfsCatalog.ROOTFS_ID))
         assertEquals(active, store.readActiveRecord())
+        // A new version cannot be in use, so it installs beside live sessions.
+        val beside = store.install(entry = RootfsCatalog.DEBIAN, expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong(), makeActive = false)
+        assertTrue(beside.toString(), beside is DistroStoreCore.InstallOutcome.Success)
+        // Reinstalling the active version replaces nothing and needs no lease.
+        assertTrue(store.install(expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong()) is DistroStoreCore.InstallOutcome.Success)
       }
     }
     store.reset()

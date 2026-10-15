@@ -70,7 +70,9 @@ export function AddUserScreen({existingUsers, onBack, onCreated, actions = DEFAU
     if (installed.kind !== 'success') {
       setProgress({kind: 'failed', draft, message: installed.errorCode === 'download_failed'
         ? `Couldn’t download ${name}. Check your connection and try again.`
-        : `${name} couldn’t be installed (${installed.errorCode}).`});
+        : installed.errorCode === 'runtime_busy'
+          ? `${name} is in use. Close its terminals and turn off SSH access, then try again.`
+          : `${name} couldn’t be installed (${installed.errorCode}).`});
       return;
     }
     setProgress({kind: 'creating', draft});

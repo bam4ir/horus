@@ -453,7 +453,9 @@ function RootfsFailure({distro, errorCode, mirror, onMirror, onRetry, onImport}:
           ? 'Its checksum didn’t match. Download it again from the link below.'
           : offline
             ? alpine ? 'Check your connection, or try a mirror closer to you.' : 'Check your connection and try again.'
-            : `Something went wrong (${errorCode}).`}
+            : errorCode === 'runtime_busy'
+              ? 'Linux is in use. Close its terminals and turn off SSH access, then try again.'
+              : `Something went wrong (${errorCode}).`}
       </Text>
       {alpine ? (
         <>
