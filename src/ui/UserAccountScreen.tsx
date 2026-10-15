@@ -26,9 +26,10 @@ export type UserAccountScreenProps = Readonly<{
 
 /** Everything about Linux users, opened from the user card on the home screen. */
 export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onUpdateUser}: UserAccountScreenProps): React.JSX.Element {
-  const [editing, setEditing] = React.useState<'name' | 'picture' | undefined>();
+  const [editing, setEditing] = React.useState(false);
   // Back leaves the editor first, then the screen.
-  useHardwareBack(true, editing !== undefined ? () => setEditing(undefined) : onBack);
+  // Back leaves the editor first, then the screen.
+  useHardwareBack(true, editing ? () => setEditing(false) : onBack);
   const missing = LINUX_DISTROS.find(distro => !users.some(other => other.distro === distro));
   const others = users.filter(other => other.distro !== user.distro);
 
@@ -42,41 +43,33 @@ export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onU
           action={<BrandBackButton onPress={onBack} testID="user-account-back" />}
         />
 
-        <View style={styles.hero} testID="user-account-card">
-          <ProfileAvatar avatar={user.avatar} selected size={104} />
-          <Text numberOfLines={1} style={styles.username} testID="user-account-name">{user.username}</Text>
-          <Text numberOfLines={1} style={styles.meta}>
-            <Text style={styles.distro}>{DISTRO_NAMES[user.distro].toUpperCase()}</Text>
-            <Text testID="user-account-home">{`  ·  /home/${user.username}`}</Text>
-          </Text>
-        </View>
-
-        {editing !== undefined && onUpdateUser !== undefined ? (
+        {editing && onUpdateUser !== undefined ? (
           <View style={styles.editor}>
-            <EditUserCard mode={editing} onCancel={() => setEditing(undefined)} onSave={onUpdateUser} onSaved={() => setEditing(undefined)} user={user} />
+            <EditUserCard onCancel={() => setEditing(false)} onSave={onUpdateUser} onSaved={() => setEditing(false)} user={user} />
           </View>
         ) : (
-          <SettingsSection title="YOUR ACCOUNT" testID="user-account-details">
-            <SettingsRow
-              accessibilityLabel={`Name, ${user.username}`}
-              label="Name"
-              onPress={onUpdateUser === undefined ? undefined : () => setEditing('name')}
-              right={<RowValue chevron={onUpdateUser !== undefined}><Text style={styles.value}>{user.username}</Text></RowValue>}
-              testID="user-account-edit-name"
-            />
-            <SettingsRow
-              accessibilityLabel="Picture"
-              label="Picture"
-              onPress={onUpdateUser === undefined ? undefined : () => setEditing('picture')}
-              right={<RowValue chevron={onUpdateUser !== undefined}><ProfileAvatar avatar={user.avatar} size={32} /></RowValue>}
-              testID="user-account-edit-picture"
-            />
-            <SettingsRow
-              label="Home folder"
-              right={<Text style={styles.value}>/home/{user.username}</Text>}
-              testID="user-account-home-row"
-            />
-          </SettingsSection>
+          <View style={styles.hero} testID="user-account-card">
+            <View>
+              <ProfileAvatar avatar={user.avatar} selected size={104} />
+              {onUpdateUser === undefined ? null : (
+                <Pressable
+                  accessibilityLabel="Edit name and picture"
+                  accessibilityRole="button"
+                  focusable={false}
+                  hitSlop={10}
+                  onPress={() => setEditing(true)}
+                  style={styles.pen}
+                  testID="user-account-edit">
+                  <Text style={styles.penText}>✎</Text>
+                </Pressable>
+              )}
+            </View>
+            <Text numberOfLines={1} style={styles.username} testID="user-account-name">{user.username}</Text>
+            <Text numberOfLines={1} style={styles.meta}>
+              <Text style={styles.distro}>{DISTRO_NAMES[user.distro].toUpperCase()}</Text>
+              <Text testID="user-account-home">{`  ·  /home/${user.username}`}</Text>
+            </Text>
+          </View>
         )}
 
         <SettingsSection
@@ -109,18 +102,7 @@ export function UserAccountScreen({user, users, onBack, onAddUser, onLogout, onU
 }
 
 /** The signed-in user's hieroglyph and Linux username. The password stays as it is. */
-/** A value on the right of a row, with a chevron when the row opens an editor. */
-function RowValue({children, chevron}: Readonly<{children: React.ReactNode; chevron: boolean}>): React.JSX.Element {
-  return (
-    <View style={styles.rowValue}>
-      {children}
-      {chevron ? <Text style={styles.chevron}>›</Text> : null}
-    </View>
-  );
-}
-
-function EditUserCard({mode, user, onSave, onSaved, onCancel}: Readonly<{
-  mode: 'name' | 'picture';
+function EditUserCard({user, onSave, onSaved, onCancel}: Readonly<{
   user: ProfileUser;
   onSave: (user: ProfileUser) => Promise<SaveProfileResult>;
   onSaved: () => void;
@@ -148,28 +130,22 @@ function EditUserCard({mode, user, onSave, onSaved, onCancel}: Readonly<{
 
   return (
     <View style={styles.card} testID="user-account-editor">
-      {mode === 'picture' ? (
-        <AvatarPicker onChange={setAvatar} value={avatar} />
-      ) : (
-        <>
-          <TextInput
-            accessibilityLabel="Username"
-            autoCapitalize="none"
-            autoComplete="off"
-            autoCorrect={false}
-            autoFocus
-            maxLength={32}
-            onChangeText={setUsername}
-            placeholder="Username"
-            placeholderTextColor={uiColors.subdued}
-            style={styles.input}
-            testID="user-account-username"
-            value={username} />
-          <Text style={styles.note}>
-            {username === user.username ? `Your home is /home/${username}.` : `Your home becomes /home/${username}. Apps and shells already running keep the old name until they restart.`}
-          </Text>
-        </>
-      )}
+      <AvatarPicker onChange={setAvatar} value={avatar} />
+      <TextInput
+        accessibilityLabel="Username"
+        autoCapitalize="none"
+        autoComplete="off"
+        autoCorrect={false}
+        maxLength={32}
+        onChangeText={setUsername}
+        placeholder="Username"
+        placeholderTextColor={uiColors.subdued}
+        style={styles.input}
+        testID="user-account-username"
+        value={username} />
+      <Text style={styles.note}>
+        {username === user.username ? `Your home is /home/${username}.` : `Your home becomes /home/${username}. Apps and shells already running keep the old name until they restart.`}
+      </Text>
       {error === undefined ? null : <Text style={styles.error} testID="user-account-edit-error">{error}</Text>}
       <View style={styles.editButtons}>
         <Pressable accessibilityRole="button" disabled={saving} onPress={onCancel} style={styles.cancel} testID="user-account-edit-cancel">
@@ -238,10 +214,9 @@ const styles = StyleSheet.create({
   hero: {alignItems: 'center', paddingBottom: 6, paddingTop: 22},
   username: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 22, fontWeight: '800', marginTop: 16},
   meta: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 11, marginTop: 6},
-  editor: {marginTop: 22},
-  value: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11},
-  rowValue: {alignItems: 'center', flexDirection: 'row', gap: 10},
-  chevron: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 16},
+  pen: {alignItems: 'center', backgroundColor: uiColors.accent, borderColor: uiColors.background, borderRadius: 16, borderWidth: 3, bottom: -8, height: 32, justifyContent: 'center', position: 'absolute', right: -8, width: 32},
+  penText: {color: uiColors.inset, fontSize: 14, fontWeight: '900', includeFontPadding: false},
+  editor: {marginTop: 18},
   distro: {color: uiColors.accent, letterSpacing: 0.9},
   input: {alignSelf: 'stretch', backgroundColor: uiColors.background, borderColor: uiColors.borderSoft, borderRadius: 8, borderWidth: 1, color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 14, marginTop: 16, minHeight: 48, paddingHorizontal: 12},
   note: {alignSelf: 'stretch', color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 8},
