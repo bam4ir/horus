@@ -2,10 +2,35 @@
 
 Tracking: [#3](https://github.com/scarif-labs/horus/issues/3)
 
-## Status (2026-10-12)
+## Status (2026-10-15)
 
-Branch `debian-rootfs`, not pushed. Phases 1–5 are done; Phase 6 is partly
-done.
+Branch `debian-rootfs`, PR #21. Main (with #9 and #23) is merged in;
+see `docs/plans/pr23-merge-and-fixes-2026-10-15.md`.
+
+Verified on the test phone on 2026-10-15:
+
+- Signing in as the other user switches distributions. The login screen
+  works like the Mac's: users first, then the chosen user alone.
+- Remote access over USB on both distributions. The phone keeps one host
+  key across users, and a 1.0.4 key is adopted, so paired computers see no
+  change. The server restarts as the new user after a switch, and an
+  interactive login prints "Horus: <user> on <distro>".
+- Codex on Debian through the app tile (apt installs Node.js 20) and over
+  SSH. Codex over SSH on Alpine installs on first use.
+
+Still open from that run:
+
+- `sudo` is a python3 script, so it fails ("not found") until the Bare
+  terminal has installed python3. Agents-only users have no sudo.
+- The profile user shares gid 1000 with the harness accounts, and the group
+  takes the name of whichever account came first (e.g. `harness_opencode`).
+  Cosmetic.
+- SSH logins on Debian cannot install Node.js; they now say to open the
+  agent in the app once.
+
+### Earlier status (2026-10-12)
+
+Phases 1–5 are done; Phase 6 is partly done.
 
 | Phase | State | Commits |
 | --- | --- | --- |
