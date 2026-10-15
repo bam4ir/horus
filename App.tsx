@@ -12,7 +12,7 @@ import {clearStoredGithubAccount, readStoredGithubAccount, saveGithubAccount} fr
 import {GITHUB_AUTH_LOGIN_COMMAND, openGithubDeviceLoginUrl} from './src/projects/githubDeviceLogin';
 import type {ProjectSummary} from './src/projects/projectTypes';
 import {WORKSPACE_PROJECTS_DIRECTORY, buildProjectCloneCommand, harnessSessionTarget, printHiddenMarker, workspaceProjectDirectory} from './src/projects/projectCommands';
-import {DISTRO_NAMES, dismissAccountIntro, lockedOutMessage, readUserProfile, updateUserProfile, verifyUserPassword, type LinuxDistro, type ProfileUser, type UserProfile} from './src/profile/profileStore';
+import {DISTRO_NAMES, LINUX_DISTROS, dismissAccountIntro, lockedOutMessage, readUserProfile, updateUserProfile, verifyUserPassword, type LinuxDistro, type ProfileUser, type UserProfile} from './src/profile/profileStore';
 import {setupOnboardingProfile} from './src/profile/onboardingSetup';
 import {readDownloadSources, writeDownloadSources} from './src/terminal/downloadSources';
 import {LoadingScreen} from './src/ui/LoadingScreen';
@@ -632,7 +632,7 @@ function App(): React.JSX.Element {
           setRoute('user');
         }}
         accountIntro={profile?.accountIntro === true ? {
-          canAddUser: !profile.users.some(candidate => candidate.distro === 'debian'),
+          addableDistro: LINUX_DISTROS.find(distro => !profile.users.some(candidate => candidate.distro === distro)),
           onOpen: () => {
             void dismissAccountIntro();
             setProfile({users: profile.users});

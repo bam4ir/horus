@@ -73,12 +73,17 @@ describe('MetroHomeScreen', () => {
     });
     const find = (testID: string) => renderer.root.findAllByProps({testID});
     expect(find('metro-account-intro').length).toBeGreaterThan(0);
-    // No Debian user to offer unless one can be added.
-    expect(renderer.root.findAll(node => typeof node.props.children === 'string' && node.props.children.includes('Debian'))).toHaveLength(0);
+    // No account to offer unless a distribution has none.
+    expect(find('metro-account-intro-add')).toHaveLength(0);
     await ReactTestRenderer.act(async () => { find('metro-account-intro-open')[0].props.onPress(); });
     expect(onOpen).toHaveBeenCalledTimes(1);
     await ReactTestRenderer.act(async () => { find('metro-account-intro-dismiss')[0].props.onPress(); });
     expect(onDismiss).toHaveBeenCalledTimes(1);
+
+    await ReactTestRenderer.act(async () => {
+      renderer.update(<MetroHomeScreen accountIntro={{onOpen, onDismiss, addableDistro: 'debian'}} onOpen={() => undefined} onOpenGithubLogin={() => undefined} user={{distro: 'alpine', username: 'horus', avatar: 'falcon'}} />);
+    });
+    expect(find('metro-account-intro-add')[0].props.children).toContain('create a Debian account');
 
     await ReactTestRenderer.act(async () => {
       renderer.update(<MetroHomeScreen onOpen={() => undefined} onOpenGithubLogin={() => undefined} user={{distro: 'alpine', username: 'horus', avatar: 'falcon'}} />);

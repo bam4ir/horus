@@ -1,6 +1,6 @@
 import React from 'react';
 import {HARNESS_LOGO_SOURCES, type HarnessLogo} from '../terminal/harnessLogos';
-import {AppState, Image, Modal, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {AppState, BackHandler, Image, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {UI_FONT_FAMILY} from './typography';
 import {readDeviceSnapshot, type DeviceSnapshot} from '../device/deviceSnapshot';
 import type {GithubAccount} from '../projects/githubRepositories';
@@ -12,7 +12,7 @@ import {ScreenShell} from '../screen/ScreenShell';
 import {BrandHeader, uiColors} from './brand';
 import {InteractivePressable as Pressable} from './InteractivePressable';
 import {ProfileAvatar} from './ProfileAvatar';
-import {DISTRO_NAMES, type ProfileUser} from '../profile/profileStore';
+import {DISTRO_NAMES, type ProfileUser, type LinuxDistro} from '../profile/profileStore';
 
 export type MetroLaunchTarget = Readonly<{
   title: string;
@@ -32,7 +32,7 @@ export type MetroHomeScreenProps = Readonly<{
   user?: ProfileUser;
   onOpenUser?: () => void;
   /** Shown once after upgrading from a Horus without Linux users. */
-  accountIntro?: Readonly<{onOpen: () => void; onDismiss: () => void; canAddUser?: boolean}>;
+  accountIntro?: Readonly<{onOpen: () => void; onDismiss: () => void; addableDistro?: LinuxDistro}>;
   onOpen: (target: MetroLaunchTarget) => void;
   onOpenGithubLogin: () => void;
   onOpenGithubAccount?: () => void;
@@ -83,6 +83,28 @@ function AppTile({icon, logo, title, detail, onPress}: AppTileProps): React.JSX.
 
 export function MetroHomeScreen({githubAccount, user, onOpenUser, accountIntro, onOpen, onOpenGithubLogin, onOpenGithubAccount, onOpenSettings, loadRecentSessions, onResumeSession, onTerminateSession}: MetroHomeScreenProps): React.JSX.Element {
   const [snapshot, setSnapshot] = React.useState<DeviceSnapshot | null>(null);
+  // The upgrade coach mark spotlights the user card; both are measured in
+  // window coordinates so the hole lines up whatever the shell's insets.
+  const userCardRef = React.useRef<React.ElementRef<typeof View>>(null);
+  const introRootRef = React.useRef<React.ElementRef<typeof View>>(null);
+  const [introHole, setIntroHole] = React.useState<IntroHole | undefined>();
+  const showIntro = accountIntro !== undefined && user !== undefined;
+  const measureIntro = React.useCallback(() => {
+    if (!showIntro) return;
+    introRootRef.current?.measureInWindow((rootX, rootY) => {
+      userCardRef.current?.measureInWindow((x, y, width, height) => {
+        if (width > 0 && height > 0) setIntroHole({x: x - rootX, y: y - rootY, width, height});
+      });
+    });
+  }, [showIntro]);
+  React.useEffect(() => {
+    if (!showIntro || accountIntro === undefined) return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      accountIntro.onDismiss();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [accountIntro, showIntro]);
   const [recentSessions, setRecentSessions] = React.useState<readonly ActiveTerminalSession[]>([]);
   const [terminatingSessions, setTerminatingSessions] = React.useState<ReadonlySet<string>>(() => new Set());
   const [terminateError, setTerminateError] = React.useState(false);
@@ -176,6 +198,7 @@ export function MetroHomeScreen({githubAccount, user, onOpenUser, accountIntro, 
         <View style={styles.menuPanel} testID="metro-menu">
           <View style={styles.identityRow}>
             {user === undefined ? null : (
+              <View collapsable={false} onLayout={measureIntro} ref={userCardRef} style={styles.userSlot}>
               <Pressable
                 accessibilityLabel={`Signed in as ${user.username}, ${DISTRO_NAMES[user.distro]}`}
                 accessibilityRole="button"
@@ -188,6 +211,7 @@ export function MetroHomeScreen({githubAccount, user, onOpenUser, accountIntro, 
                   <Text numberOfLines={1} style={[styles.tileLabel, styles.userDistro]} testID="metro-user-distro">{DISTRO_NAMES[user.distro].toUpperCase()}</Text>
                 </View>
               </Pressable>
+              </View>
             )}
             <Pressable
               accessibilityLabel={githubAccount === undefined ? 'Log in to GitHub' : `GitHub account, @${githubAccount.username}`}
@@ -297,38 +321,99 @@ export function MetroHomeScreen({githubAccount, user, onOpenUser, accountIntro, 
 
       </ScrollView>
       {accountIntro === undefined || user === undefined ? null : (
-        <Modal animationType="fade" onRequestClose={accountIntro.onDismiss} statusBarTranslucent transparent visible>
-          <View style={styles.introBackdrop} testID="metro-account-intro">
-            <View style={styles.intro}>
-              <ProfileAvatar avatar={user.avatar} selected size={72} />
-              <Text style={styles.introTitle}>Make Horus yours</Text>
-              <Text style={styles.introBody}>
-                {`Horus now has Linux users. You’re signed in as ${user.username}. Pick your own name and picture${accountIntro.canAddUser === true ? ', or add a Debian user for tools Alpine can’t run' : ''}.`}
-              </Text>
-              <Pressable accessibilityRole="button" onPress={accountIntro.onOpen} style={styles.introOpen} testID="metro-account-intro-open">
-                <Text style={styles.introOpenText}>OPEN ACCOUNT</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" onPress={accountIntro.onDismiss} style={styles.introLater} testID="metro-account-intro-dismiss">
-                <Text style={styles.introLaterText}>NOT NOW</Text>
-              </Pressable>
-            </View>
-          </View>
-        </Modal>
+        <View collapsable={false} onLayout={measureIntro} ref={introRootRef} style={StyleSheet.absoluteFill} testID="metro-account-intro">
+          <AccountCoachMark
+            addableDistro={accountIntro.addableDistro}
+            hole={introHole}
+            onDismiss={accountIntro.onDismiss}
+            onOpen={accountIntro.onOpen}
+          />
+        </View>
       )}
     </ScreenShell>
   );
 }
 
+type IntroHole = Readonly<{x: number; y: number; width: number; height: number}>;
+
+const HOLE_PAD = 6;
+
+/**
+ * Dims Home except the user card, rings it, and points at it with a short
+ * leader line and a note, like an app's first-run coach marks.
+ */
+function AccountCoachMark({hole, addableDistro, onOpen, onDismiss}: Readonly<{
+  hole?: IntroHole;
+  addableDistro?: LinuxDistro;
+  onOpen: () => void;
+  onDismiss: () => void;
+}>): React.JSX.Element {
+  const note = (
+    <View style={styles.coachNote}>
+      <Text style={styles.coachTitle}>This is you</Text>
+      <Text style={styles.coachBody}>Horus now has Linux users. Tap your card to change your name and picture.</Text>
+      {addableDistro === undefined ? null : (
+        <Text style={styles.coachBody} testID="metro-account-intro-add">
+          {addableDistro === 'debian'
+            ? 'You can also create a Debian account there, for tools Alpine can’t run.'
+            : 'You can also create an Alpine account there: small and fast.'}
+        </Text>
+      )}
+      <View style={styles.coachActions}>
+        <Pressable accessibilityRole="button" onPress={onDismiss} style={styles.coachLater} testID="metro-account-intro-dismiss">
+          <Text style={styles.coachLaterText}>NOT NOW</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={onOpen} style={styles.coachOpen} testID="metro-account-intro-open">
+          <Text style={styles.coachOpenText}>OPEN ACCOUNT</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+  if (hole === undefined) {
+    return <View style={[StyleSheet.absoluteFill, styles.coachDim, styles.coachCentered]}>{note}</View>;
+  }
+  const top = Math.max(0, hole.y - HOLE_PAD);
+  const left = Math.max(0, hole.x - HOLE_PAD);
+  const width = hole.width + HOLE_PAD * 2;
+  const height = hole.height + HOLE_PAD * 2;
+  const lineX = left + width / 2;
+  return (
+    <>
+      <View style={[styles.coachDim, {height: top, left: 0, position: 'absolute', right: 0, top: 0}]} />
+      <View style={[styles.coachDim, {bottom: 0, left: 0, position: 'absolute', right: 0, top: top + height}]} />
+      <View style={[styles.coachDim, {height, left: 0, position: 'absolute', top, width: left}]} />
+      <View style={[styles.coachDim, {height, left: left + width, position: 'absolute', right: 0, top}]} />
+      <Pressable
+        accessibilityLabel="Open Account"
+        accessibilityRole="button"
+        onPress={onOpen}
+        style={[styles.coachRing, {height, left, top, width}]}
+        testID="metro-account-intro-spot"
+      />
+      <View style={[styles.coachLine, {left: lineX - 1, top: top + height}]} />
+      <View style={[styles.coachDot, {left: lineX - 5, top: top + height + 34}]} />
+      <View style={[styles.coachNoteAt, {top: top + height + 50}]}>{note}</View>
+    </>
+  );
+}
+
 const styles = StyleSheet.create({
   content: {paddingHorizontal: 18, paddingBottom: 20},
-  introBackdrop: {alignItems: 'center', backgroundColor: 'rgba(0, 0, 0, 0.78)', flex: 1, justifyContent: 'center', padding: 24},
-  intro: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 18, borderWidth: 1, maxWidth: 380, paddingHorizontal: 22, paddingVertical: 26, width: '100%'},
-  introTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', marginTop: 16},
-  introBody: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 12, lineHeight: 18, marginTop: 10, textAlign: 'center'},
-  introOpen: {alignItems: 'center', alignSelf: 'stretch', backgroundColor: uiColors.accent, borderRadius: 10, justifyContent: 'center', marginTop: 22, minHeight: 48},
-  introOpenText: {color: uiColors.inset, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '900', letterSpacing: 0.6},
-  introLater: {alignItems: 'center', alignSelf: 'stretch', justifyContent: 'center', marginTop: 6, minHeight: 44},
-  introLaterText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '800', letterSpacing: 0.6},
+  userSlot: {flex: 1, minWidth: 0},
+  coachDim: {backgroundColor: 'rgba(0, 0, 0, 0.85)'},
+  coachCentered: {justifyContent: 'center', padding: 24},
+  coachRing: {borderColor: uiColors.accent, borderRadius: 16, borderWidth: 2, position: 'absolute'},
+  coachLine: {backgroundColor: uiColors.ink, height: 34, position: 'absolute', width: 2},
+  coachDot: {backgroundColor: uiColors.ink, borderRadius: 5, height: 10, position: 'absolute', width: 10},
+  coachNoteAt: {left: 24, position: 'absolute', right: 24},
+  coachNote: {alignSelf: 'stretch'},
+  coachTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 20, fontWeight: '800'},
+  coachBody: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 13, lineHeight: 20, marginTop: 8, opacity: 0.85},
+  coachActions: {flexDirection: 'row', gap: 10, marginTop: 20},
+  coachLater: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 10, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 46},
+  coachLaterText: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '800', letterSpacing: 0.6},
+  coachOpen: {alignItems: 'center', backgroundColor: uiColors.accent, borderRadius: 10, flex: 1, justifyContent: 'center', minHeight: 46},
+  coachOpenText: {color: uiColors.inset, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '900', letterSpacing: 0.6},
   menuPanel: {backgroundColor: uiColors.background, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, marginTop: 0, padding: 10},
   activeSessionsPanel: {backgroundColor: uiColors.background, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, marginTop: 12, padding: 10},
   panelSectionLabel: {marginTop: 0},
