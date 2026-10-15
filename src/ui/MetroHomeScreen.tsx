@@ -1,6 +1,6 @@
 import React from 'react';
 import {HARNESS_LOGO_SOURCES, type HarnessLogo} from '../terminal/harnessLogos';
-import {AppState, Image, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {AppState, Image, Modal, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {UI_FONT_FAMILY} from './typography';
 import {readDeviceSnapshot, type DeviceSnapshot} from '../device/deviceSnapshot';
 import type {GithubAccount} from '../projects/githubRepositories';
@@ -32,7 +32,7 @@ export type MetroHomeScreenProps = Readonly<{
   user?: ProfileUser;
   onOpenUser?: () => void;
   /** Shown once after upgrading from a Horus without Linux users. */
-  accountIntro?: Readonly<{onOpen: () => void; onDismiss: () => void}>;
+  accountIntro?: Readonly<{onOpen: () => void; onDismiss: () => void; canAddUser?: boolean}>;
   onOpen: (target: MetroLaunchTarget) => void;
   onOpenGithubLogin: () => void;
   onOpenGithubAccount?: () => void;
@@ -173,26 +173,6 @@ export function MetroHomeScreen({githubAccount, user, onOpenUser, accountIntro, 
           )}
         />
 
-        {accountIntro === undefined || user === undefined ? null : (
-          <View style={styles.intro} testID="metro-account-intro">
-            <View style={styles.introHead}>
-              <ProfileAvatar avatar={user.avatar} selected size={40} />
-              <Text style={styles.introTitle}>Make Horus yours</Text>
-            </View>
-            <Text style={styles.introBody}>
-              Horus now has Linux users. You’re signed in as {user.username}. Pick your own name and picture, or add a Debian user for tools Alpine can’t run.
-            </Text>
-            <View style={styles.introActions}>
-              <Pressable accessibilityRole="button" onPress={accountIntro.onDismiss} style={styles.introLater} testID="metro-account-intro-dismiss">
-                <Text style={styles.introLaterText}>NOT NOW</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" onPress={accountIntro.onOpen} style={styles.introOpen} testID="metro-account-intro-open">
-                <Text style={styles.introOpenText}>OPEN ACCOUNT</Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
-
         <View style={styles.menuPanel} testID="metro-menu">
           <View style={styles.identityRow}>
             {user === undefined ? null : (
@@ -316,21 +296,39 @@ export function MetroHomeScreen({githubAccount, user, onOpenUser, accountIntro, 
         ) : null}
 
       </ScrollView>
+      {accountIntro === undefined || user === undefined ? null : (
+        <Modal animationType="fade" onRequestClose={accountIntro.onDismiss} statusBarTranslucent transparent visible>
+          <View style={styles.introBackdrop} testID="metro-account-intro">
+            <View style={styles.intro}>
+              <ProfileAvatar avatar={user.avatar} selected size={72} />
+              <Text style={styles.introTitle}>Make Horus yours</Text>
+              <Text style={styles.introBody}>
+                {`Horus now has Linux users. You’re signed in as ${user.username}. Pick your own name and picture${accountIntro.canAddUser === true ? ', or add a Debian user for tools Alpine can’t run' : ''}.`}
+              </Text>
+              <Pressable accessibilityRole="button" onPress={accountIntro.onOpen} style={styles.introOpen} testID="metro-account-intro-open">
+                <Text style={styles.introOpenText}>OPEN ACCOUNT</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" onPress={accountIntro.onDismiss} style={styles.introLater} testID="metro-account-intro-dismiss">
+                <Text style={styles.introLaterText}>NOT NOW</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+      )}
     </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
   content: {paddingHorizontal: 18, paddingBottom: 20},
-  intro: {backgroundColor: uiColors.accentSurface, borderColor: uiColors.accent, borderRadius: 14, borderWidth: 1, marginBottom: 12, padding: 14},
-  introHead: {alignItems: 'center', flexDirection: 'row', gap: 12},
-  introTitle: {color: uiColors.ink, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 15, fontWeight: '800'},
-  introBody: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 17, marginTop: 10},
-  introActions: {flexDirection: 'row', gap: 8, marginTop: 14},
-  introLater: {alignItems: 'center', borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 40},
-  introLaterText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '800', letterSpacing: 0.6},
-  introOpen: {alignItems: 'center', backgroundColor: uiColors.accent, borderRadius: 8, flex: 1, justifyContent: 'center', minHeight: 40},
-  introOpenText: {color: uiColors.inset, fontFamily: UI_FONT_FAMILY, fontSize: 10, fontWeight: '900', letterSpacing: 0.6},
+  introBackdrop: {alignItems: 'center', backgroundColor: 'rgba(0, 0, 0, 0.78)', flex: 1, justifyContent: 'center', padding: 24},
+  intro: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 18, borderWidth: 1, maxWidth: 380, paddingHorizontal: 22, paddingVertical: 26, width: '100%'},
+  introTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', marginTop: 16},
+  introBody: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 12, lineHeight: 18, marginTop: 10, textAlign: 'center'},
+  introOpen: {alignItems: 'center', alignSelf: 'stretch', backgroundColor: uiColors.accent, borderRadius: 10, justifyContent: 'center', marginTop: 22, minHeight: 48},
+  introOpenText: {color: uiColors.inset, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '900', letterSpacing: 0.6},
+  introLater: {alignItems: 'center', alignSelf: 'stretch', justifyContent: 'center', marginTop: 6, minHeight: 44},
+  introLaterText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '800', letterSpacing: 0.6},
   menuPanel: {backgroundColor: uiColors.background, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, marginTop: 0, padding: 10},
   activeSessionsPanel: {backgroundColor: uiColors.background, borderColor: uiColors.border, borderRadius: 14, borderWidth: 1, marginTop: 12, padding: 10},
   panelSectionLabel: {marginTop: 0},

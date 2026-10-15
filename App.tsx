@@ -632,6 +632,7 @@ function App(): React.JSX.Element {
           setRoute('user');
         }}
         accountIntro={profile?.accountIntro === true ? {
+          canAddUser: !profile.users.some(candidate => candidate.distro === 'debian'),
           onOpen: () => {
             void dismissAccountIntro();
             setProfile({users: profile.users});
