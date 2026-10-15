@@ -534,8 +534,10 @@ class TerminalRuntimeModule(
       }
       installExecutor.execute {
         val response = try {
+          val switched = store.readActiveRecord()?.rootfsId != entry.rootfsId
           if (store.activate(entry.rootfsId)) {
             TerminalDebugLog.record(appContext, "module_rootfs_activated request=$requestId distro=${entry.distro}")
+            if (switched) RemoteAccessController(appContext).restartIfEnabled()
             Arguments.createMap().apply {
               putString("requestId", requestId)
               putString("status", "success")

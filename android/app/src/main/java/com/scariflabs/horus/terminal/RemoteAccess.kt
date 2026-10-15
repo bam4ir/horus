@@ -15,6 +15,8 @@ object RemoteAccess {
   const val PORT = 8022
   const val ACTION_START = "com.scariflabs.horus.action.REMOTE_ACCESS_START"
   const val ACTION_STOP = "com.scariflabs.horus.action.REMOTE_ACCESS_STOP"
+  /** The active user changed; the server must run as the new one. */
+  const val ACTION_RESTART = "com.scariflabs.horus.action.REMOTE_ACCESS_RESTART"
   const val DIR_NAME = "remote-access"
   const val STATE_STOPPED = "stopped"
   const val STATE_STARTING = "starting"

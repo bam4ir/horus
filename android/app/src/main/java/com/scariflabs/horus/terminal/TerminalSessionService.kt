@@ -307,7 +307,10 @@ class TerminalSessionService : Service() {
     startedForWork.set(true)
     startForeground(NOTIFICATION_ID, buildNotification())
     queueRecovery()
-    if (intent?.action == RemoteAccess.ACTION_START) enqueueWorker {
+    if (intent?.action == RemoteAccess.ACTION_START || intent?.action == RemoteAccess.ACTION_RESTART) enqueueWorker {
+      // dropbear runs as the user active when it started; a computer then
+      // logs in as the new one, who does not exist in the old rootfs.
+      if (intent.action == RemoteAccess.ACTION_RESTART && remoteServerDelegate.isInitialized()) remoteServer.stop()
       if (remoteStore.isEnabled()) remoteServer.start()
       refreshSessionNotifications()
     }

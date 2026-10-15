@@ -62,7 +62,7 @@ export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): 
   }, [error, shake, validationError]);
 
   const submit = React.useCallback(async () => {
-    if (selected === undefined) return;
+    if (selected === undefined || saving) return;
     if (password.length < 4) {
       setValidationError(`Enter ${selected.username}’s password to unlock Horus.`);
       return;
@@ -74,8 +74,10 @@ export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): 
     } finally {
       setSaving(false);
       setPassword('');
+      // Like the Mac, keep the cursor in the field for another try.
+      passwordRef.current?.focus();
     }
-  }, [onLogin, password, selected]);
+  }, [onLogin, password, saving, selected]);
 
   if (selected === undefined) {
     return (
@@ -116,7 +118,6 @@ export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): 
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus
-            editable={!saving}
             onChangeText={setPassword}
             onSubmitEditing={() => { void submit(); }}
             placeholder="Enter Password"
@@ -131,6 +132,7 @@ export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): 
             accessibilityLabel={saving ? 'Signing in' : 'Sign in'}
             accessibilityRole="button"
             disabled={saving}
+            focusable={false}
             onPress={() => { void submit(); }}
             style={[styles.go, !canSubmit && styles.goIdle]}
             testID="login-submit">
@@ -141,7 +143,7 @@ export function LoginScreen({users, onLogin, error, notice}: LoginScreenProps): 
         {validationError !== undefined ? <Text style={[authStyles.error, styles.centered]} testID="login-validation-error">{validationError}</Text> : null}
         {error !== undefined ? <Text style={[authStyles.error, styles.centered]} testID="login-error">{error}</Text> : null}
         {single ? null : (
-          <Pressable accessibilityRole="button" disabled={saving} onPress={switchUser} style={styles.back} testID="login-back">
+          <Pressable accessibilityRole="button" disabled={saving} focusable={false} onPress={switchUser} style={styles.back} testID="login-back">
             <Text style={styles.backText}>‹  Switch user</Text>
           </Pressable>
         )}
