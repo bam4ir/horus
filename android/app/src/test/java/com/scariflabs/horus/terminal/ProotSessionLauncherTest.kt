@@ -1015,6 +1015,14 @@ class ProotSessionLauncherTest {
       assertEquals("npm\nnpm\n", npmLog.readText())
       assertEquals("version\nversion\n", versionLog.readText())
       assertEquals("preserve user config", config.readText())
+
+      // A working payload without its marker is restamped offline, never removed.
+      File(cacheDir, "opencode.ready").delete()
+      command("npm", "printf 'npm\\n' >> '${npmLog.absolutePath}'\nexit 1")
+      assertTrue(runProvision().contains("HORUS_TOOLCHAIN_READY"))
+      assertEquals("npm\nnpm\n", npmLog.readText())
+      assertTrue(entry.isFile && entry.canExecute())
+      assertEquals("ready:123:456:789:1\n", File(cacheDir, "opencode.ready").readText())
     } finally {
       base.deleteRecursively()
     }
@@ -1494,7 +1502,11 @@ class ProotSessionLauncherTest {
     try {
       val rootfs = File(base, "rootfs").apply { mkdirs() }
       File(rootfs, "etc").mkdirs()
-      val launch = launcher(base, File(base, "proc").apply { mkdirs() }).remoteAccessLaunchSpec(
+      // SSH needs /dev/pts, which a macOS host lacks.
+      val hostDev = File(base, "dev").apply { mkdirs() }
+      listOf("null", "zero", "random", "urandom", "tty", "ptmx").forEach { File(hostDev, it).writeText("") }
+      File(hostDev, "pts").mkdirs()
+      val launch = launcher(base, File(base, "proc").apply { mkdirs() }, hostDev = hostDev).remoteAccessLaunchSpec(
         rootfs,
         File(base, "home").apply { mkdirs() },
         null,
@@ -1552,7 +1564,7 @@ class ProotSessionLauncherTest {
     }
   }
 
-  private fun launcher(base: File, hostProc: File, scratch: File = File(base, "scratch")): ProotSessionLauncher =
+  private fun launcher(base: File, hostProc: File, scratch: File = File(base, "scratch"), hostDev: File = File("/dev")): ProotSessionLauncher =
     ProotSessionLauncher(
       runtime = ProotRuntimeLocator.LocatedRuntime(
         prootBin = File(base, "libproot.so"),
@@ -1562,5 +1574,6 @@ class ProotSessionLauncherTest {
       ),
       scratchDir = scratch,
       hostProcDir = hostProc,
+      hostDevDir = hostDev,
     )
 }

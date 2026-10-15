@@ -267,6 +267,9 @@ class ProotSessionLauncher(
       throw IllegalStateException("cannot create proot scratch directory")
     }
     require(!Files.isSymbolicLink(scratchDir.toPath())) { "proot scratch directory is a symbolic link" }
+    // This is the guest /tmp for every rootfs and user, so give it the
+    // rootfs tarball's 1777. The app-private parent still keeps it private.
+    runCatching { Os.chmod(scratchDir.absolutePath, "1777".toInt(8)) }
     DistroStoreCore.pruneProotTemps(scratchDir, hostProcDir)
     require(!Files.isSymbolicLink(hardlinkDir.toPath())) { "proot hardlink directory is a symbolic link" }
     if (!hardlinkDir.isDirectory && !hardlinkDir.mkdirs() && !hardlinkDir.isDirectory) {
@@ -1523,6 +1526,13 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
           exit 1
         fi
       )
+      # The backup outlives its install so sessions started from it keep
+      # running. Once a later check finds the new package stamped, drop it.
+      prune_codex_backup() (
+        exec 8>"${'$'}HOME/.cache/horus/codex-install.lock"
+        flock -n 8 || exit 0
+        if codex_stamped; then rm -rf "${'$'}HOME/.local/lib/node_modules/@openai/.codex.previous"; fi
+      )
       install_codex_package() (
         mkdir -p "${'$'}HOME/.cache/horus" || exit 1
         # App provisioning and SSH share this lock, including crash recovery.
@@ -1753,9 +1763,11 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         fi
       fi
       $CODEX_INSTALL_SCRIPT
-      if [ "${'$'}target" = codex ] && ! codex_stamped; then
+      if [ "${'$'}target" = codex ] && codex_stamped; then
+        prune_codex_backup || true
+      elif [ "${'$'}target" = codex ]; then
         mark_provision_stage codex
-        if ! run_logged /root/.cache/horus/codex-install.log install_codex_package; then
+        if ! run_downloading Codex "${'$'}(npm_download_kb @openai/codex)" /root/.npm /root/.cache/horus/codex-install.log install_codex_package; then
           mark_provision_stage codex_failed
           exit 23
         fi
@@ -1779,9 +1791,9 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
           fi
         fi
       fi
-      if [ "${'$'}target" = opencode ] && {
-        [ ! -f "${'$'}target_marker" ] || [ "${'$'}opencode_payload_valid" != true ];
-      }; then
+      # A payload that answers --version only needs a fresh stamp (written
+      # below), so a missing marker never removes a working OpenCode offline.
+      if [ "${'$'}target" = opencode ] && [ "${'$'}opencode_payload_valid" != true ]; then
         mark_provision_stage opencode
         # npm/postinstall can retain an existing corrupted selected binary.
         # Remove only the replaceable package, preserving ~/.config/opencode.
