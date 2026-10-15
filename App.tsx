@@ -24,6 +24,7 @@ import {LoginScreen} from './src/ui/LoginScreen';
 import {FileExplorerScreen} from './src/ui/FileExplorerScreen';
 import {GithubAccountScreen} from './src/ui/GithubAccountScreen';
 import {SessionSettingsScreen} from './src/ui/SessionSettingsScreen';
+import {UserAccountScreen} from './src/ui/UserAccountScreen';
 import {useHardwareBack} from './src/ui/useHardwareBack';
 import {useBackgroundSessionLock} from './src/profile/sessionTimeout';
 import {updateUnlockGrant, useUnlockGrantAppState} from './src/profile/unlockGrant';
@@ -31,7 +32,7 @@ import {consumeLaunchSessionId} from './src/terminal/session/launchSession';
 import {sessionTitle} from './src/terminal/toolchainLabels';
 import {createRequestIdFactory} from './src/terminal/requestIds';
 
-type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'add-user' | 'github-account' | 'projects' | 'files' | 'terminal';
+type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'user' | 'add-user' | 'github-account' | 'projects' | 'files' | 'terminal';
 type BootState = 'checking' | 'installing' | 'error';
 
 const BOOT_REQUEST_ID = 'horus-bootstrap-1';
@@ -274,6 +275,14 @@ function App(): React.JSX.Element {
     setRoute('login');
   }, []);
 
+  // Switching users locks like the background lock; sessions keep running.
+  const switchUser = React.useCallback(() => {
+    setProfileError(undefined);
+    setLockNotice(undefined);
+    void updateUnlockGrant('revoke');
+    setRoute(__DEV__ ? 'home' : 'login');
+  }, []);
+
   // Logging out ends every session, unlike the background lock.
   const logout = React.useCallback(async (): Promise<boolean> => {
     const stopped = await sessionClient.stopAllTerminalSessions(nextSessionRequestId('logout'), 'user_stop');
@@ -286,7 +295,7 @@ function App(): React.JSX.Element {
     return true;
   }, [sessionClient, setPendingCompletion]);
 
-  const authenticated = route === 'home' || route === 'settings' || route === 'add-user' || route === 'github-account' || route === 'projects' || route === 'files' || route === 'terminal';
+  const authenticated = route === 'home' || route === 'settings' || route === 'user' || route === 'add-user' || route === 'github-account' || route === 'projects' || route === 'files' || route === 'terminal';
   useBackgroundSessionLock(!__DEV__ && profile !== null && authenticated, lockSession);
   useUnlockGrantAppState(!__DEV__ && profile !== null && authenticated);
 
@@ -619,7 +628,7 @@ function App(): React.JSX.Element {
       <MetroHomeScreen
         githubAccount={githubAccount}
         user={profile?.users.find(candidate => candidate.distro === activeDistro)}
-        onOpenUser={openSettings}
+        onOpenUser={() => setRoute('user')}
         loadRecentSessions={loadRecentSessions}
         onOpenGithubLogin={openHomeGithubLogin}
         onOpenGithubAccount={openGithubAccount}
@@ -631,16 +640,29 @@ function App(): React.JSX.Element {
     );
   }
   if (route === 'settings') {
-    return <SessionSettingsScreen onAddUser={() => setRoute('add-user')} onBack={() => setRoute('home')} onLogout={logout} users={profile?.users ?? []} />;
+    return <SessionSettingsScreen onBack={() => setRoute('home')} />;
+  }
+  const signedInUser = profile?.users.find(candidate => candidate.distro === activeDistro);
+  if (route === 'user' && profile !== null && signedInUser !== undefined) {
+    return (
+      <UserAccountScreen
+        onAddUser={() => setRoute('add-user')}
+        onBack={() => setRoute('home')}
+        onLogout={logout}
+        onSwitchUser={switchUser}
+        user={signedInUser}
+        users={profile.users}
+      />
+    );
   }
   if (route === 'add-user' && profile !== null) {
     return (
       <AddUserScreen
         existingUsers={profile.users}
-        onBack={() => setRoute('settings')}
+        onBack={() => setRoute('user')}
         onCreated={user => {
           setProfile({users: [...profile.users, user].sort((a, b) => a.distro.localeCompare(b.distro))});
-          setRoute('settings');
+          setRoute('user');
         }}
       />
     );

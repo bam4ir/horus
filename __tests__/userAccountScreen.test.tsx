@@ -1,0 +1,61 @@
+import React from 'react';
+import ReactTestRenderer from 'react-test-renderer';
+import type {ProfileUser} from '../src/profile/profileStore';
+import {UserAccountScreen} from '../src/ui/UserAccountScreen';
+
+const ALPINE: ProfileUser = {distro: 'alpine', username: 'horus', avatar: 'falcon'};
+const DEBIAN: ProfileUser = {distro: 'debian', username: 'deb', avatar: 'ibis'};
+
+async function render(element: React.ReactElement) {
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  await ReactTestRenderer.act(async () => {
+    renderer = ReactTestRenderer.create(element);
+    await Promise.resolve();
+  });
+  const find = (testID: string) => renderer.root.findAllByProps({testID});
+  return {renderer, find};
+}
+
+describe('UserAccountScreen', () => {
+  test('shows the signed-in user and offers to add the missing distribution', async () => {
+    const onAddUser = jest.fn();
+    const onSwitchUser = jest.fn();
+    const {renderer, find} = await render(<UserAccountScreen onAddUser={onAddUser} onBack={() => undefined} onSwitchUser={onSwitchUser} user={ALPINE} users={[ALPINE]} />);
+    expect(find('user-account-name')[0].props.children).toBe('horus');
+    expect(find('user-account-home')[0].props.children).toEqual(['/home/', 'horus']);
+    // Nobody to switch to yet.
+    expect(find('user-account-switch')).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { find('user-account-add-user')[0].props.onPress(); });
+    expect(onAddUser).toHaveBeenCalledTimes(1);
+
+    await ReactTestRenderer.act(async () => {
+      renderer.update(<UserAccountScreen onAddUser={onAddUser} onBack={() => undefined} onSwitchUser={onSwitchUser} user={ALPINE} users={[ALPINE, DEBIAN]} />);
+    });
+    expect(find('user-account-add-user')).toHaveLength(0);
+    // The signed-in user is the card; the list holds the others.
+    expect(find('user-account-user-alpine')).toHaveLength(0);
+    expect(find('user-account-user-debian')[0].props.detail).toBe('Debian · /home/deb');
+    await ReactTestRenderer.act(async () => { find('user-account-switch')[0].props.onPress(); });
+    expect(onSwitchUser).toHaveBeenCalledTimes(1);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
+
+  test('logs out only on the second tap, and reports a failed stop', async () => {
+    const onLogout = jest.fn(async () => false);
+    const {renderer, find} = await render(<UserAccountScreen onBack={() => undefined} onLogout={onLogout} user={ALPINE} users={[ALPINE]} />);
+    const logout = () => find('user-account-logout')[0];
+    expect(logout().props.label).toBe('LOG OUT');
+    await ReactTestRenderer.act(async () => { logout().props.onPress(); });
+    expect(onLogout).not.toHaveBeenCalled();
+    expect(logout().props.label).toBe('CONFIRM');
+
+    await ReactTestRenderer.act(async () => {
+      logout().props.onPress();
+      await Promise.resolve();
+    });
+    expect(onLogout).toHaveBeenCalledTimes(1);
+    expect(logout().props.label).toBe('LOG OUT');
+    expect(renderer.root.findAllByProps({children: 'Couldn’t stop every session. Try again.'}).length).toBeGreaterThan(0);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
+});
