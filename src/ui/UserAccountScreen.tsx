@@ -1,6 +1,8 @@
 import React from 'react';
-import {ScrollView, StyleSheet, Text, View} from 'react-native';
-import {DISTRO_NAMES, LINUX_DISTROS, type ProfileUser} from '../profile/profileStore';
+import {ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
+import {DISTRO_NAMES, LINUX_DISTROS, usernameProblem, type AvatarId, type ProfileUser, type SaveProfileResult} from '../profile/profileStore';
+import {AvatarPicker} from './AccountForm';
+import {InteractivePressable as Pressable} from './InteractivePressable';
 import {ScreenShell} from '../screen/ScreenShell';
 import {BrandBackButton, BrandHeader, uiColors} from './brand';
 import {ProfileAvatar} from './ProfileAvatar';
@@ -20,11 +22,15 @@ export type UserAccountScreenProps = Readonly<{
   onSwitchUser?: () => void;
   /** Stops every running session and returns to sign in; false if the stop failed. */
   onLogout?: () => Promise<boolean>;
+  /** Saves a new username or avatar for the signed-in user. */
+  onUpdateUser?: (user: ProfileUser) => Promise<SaveProfileResult>;
 }>;
 
 /** Everything about Linux users, opened from the user card on the home screen. */
-export function UserAccountScreen({user, users, onBack, onAddUser, onSwitchUser, onLogout}: UserAccountScreenProps): React.JSX.Element {
-  useHardwareBack(true, onBack);
+export function UserAccountScreen({user, users, onBack, onAddUser, onSwitchUser, onLogout, onUpdateUser}: UserAccountScreenProps): React.JSX.Element {
+  const [editing, setEditing] = React.useState(false);
+  // Back leaves the editor first, then the screen.
+  useHardwareBack(true, editing ? () => setEditing(false) : onBack);
   const missing = LINUX_DISTROS.find(distro => !users.some(other => other.distro === distro));
   const others = users.filter(other => other.distro !== user.distro);
 
@@ -38,12 +44,21 @@ export function UserAccountScreen({user, users, onBack, onAddUser, onSwitchUser,
           action={<BrandBackButton onPress={onBack} testID="user-account-back" />}
         />
 
-        <View style={styles.card} testID="user-account-card">
-          <ProfileAvatar avatar={user.avatar} selected size={72} />
-          <Text numberOfLines={1} style={styles.username} testID="user-account-name">{user.username}</Text>
-          <Text style={styles.distro}>{DISTRO_NAMES[user.distro].toUpperCase()}</Text>
-          <Text style={styles.home} testID="user-account-home">/home/{user.username}</Text>
-        </View>
+        {editing && onUpdateUser !== undefined ? (
+          <EditUserCard onCancel={() => setEditing(false)} onSave={onUpdateUser} onSaved={() => setEditing(false)} user={user} />
+        ) : (
+          <View style={styles.card} testID="user-account-card">
+            <ProfileAvatar avatar={user.avatar} selected size={72} />
+            <Text numberOfLines={1} style={styles.username} testID="user-account-name">{user.username}</Text>
+            <Text style={styles.distro}>{DISTRO_NAMES[user.distro].toUpperCase()}</Text>
+            <Text style={styles.home} testID="user-account-home">/home/{user.username}</Text>
+            {onUpdateUser === undefined ? null : (
+              <View style={styles.editAction}>
+                <SettingsAction label="EDIT" onPress={() => setEditing(true)} testID="user-account-edit" />
+              </View>
+            )}
+          </View>
+        )}
 
         <SettingsSection
           footer={others.length > 0 ? 'Each user has their own Linux and home. Switching keeps running sessions going.' : undefined}
@@ -79,6 +94,69 @@ export function UserAccountScreen({user, users, onBack, onAddUser, onSwitchUser,
         {onLogout === undefined ? null : <LogoutSection onLogout={onLogout} />}
       </ScrollView>
     </ScreenShell>
+  );
+}
+
+/** The signed-in user's hieroglyph and Linux username. The password stays as it is. */
+function EditUserCard({user, onSave, onSaved, onCancel}: Readonly<{
+  user: ProfileUser;
+  onSave: (user: ProfileUser) => Promise<SaveProfileResult>;
+  onSaved: () => void;
+  onCancel: () => void;
+}>): React.JSX.Element {
+  const [avatar, setAvatar] = React.useState<AvatarId>(user.avatar);
+  const [username, setUsername] = React.useState(user.username);
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | undefined>();
+  const changed = avatar !== user.avatar || username !== user.username;
+
+  const save = React.useCallback(async () => {
+    const problem = usernameProblem(username);
+    if (problem !== undefined) {
+      setError(problem);
+      return;
+    }
+    setSaving(true);
+    setError(undefined);
+    const result = await onSave({distro: user.distro, username, avatar});
+    setSaving(false);
+    if (result.kind === 'success') onSaved();
+    else setError(`Couldn’t save (${result.code}). Try again.`);
+  }, [avatar, onSave, onSaved, user.distro, username]);
+
+  return (
+    <View style={styles.card} testID="user-account-editor">
+      <AvatarPicker onChange={setAvatar} value={avatar} />
+      <TextInput
+        accessibilityLabel="Username"
+        autoCapitalize="none"
+        autoComplete="off"
+        autoCorrect={false}
+        maxLength={32}
+        onChangeText={setUsername}
+        placeholder="Username"
+        placeholderTextColor={uiColors.subdued}
+        style={styles.input}
+        testID="user-account-username"
+        value={username} />
+      <Text style={styles.note}>
+        {username === user.username ? `Your home is /home/${username}.` : `Your home becomes /home/${username}. Apps and shells already running keep the old name until they restart.`}
+      </Text>
+      {error === undefined ? null : <Text style={styles.error} testID="user-account-edit-error">{error}</Text>}
+      <View style={styles.editButtons}>
+        <Pressable accessibilityRole="button" disabled={saving} onPress={onCancel} style={styles.cancel} testID="user-account-edit-cancel">
+          <Text style={styles.cancelText}>CANCEL</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={saving || !changed}
+          onPress={() => { void save(); }}
+          style={[styles.save, (saving || !changed) && styles.saveIdle]}
+          testID="user-account-edit-save">
+          <Text style={styles.saveText}>{saving ? 'SAVING…' : 'SAVE'}</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -133,4 +211,14 @@ const styles = StyleSheet.create({
   username: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 18, fontWeight: '800', marginTop: 12},
   distro: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 10, letterSpacing: 0.9, marginTop: 4},
   home: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 11, marginTop: 8},
+  editAction: {marginTop: 16},
+  input: {alignSelf: 'stretch', backgroundColor: uiColors.background, borderColor: uiColors.borderSoft, borderRadius: 8, borderWidth: 1, color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 14, marginTop: 16, minHeight: 48, paddingHorizontal: 12},
+  note: {alignSelf: 'stretch', color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 10, lineHeight: 15, marginTop: 8},
+  error: {alignSelf: 'stretch', color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 16, marginTop: 8},
+  editButtons: {alignSelf: 'stretch', flexDirection: 'row', gap: 8, marginTop: 16},
+  cancel: {alignItems: 'center', borderColor: uiColors.borderSoft, borderRadius: 8, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 44},
+  cancelText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '800', letterSpacing: 0.6},
+  save: {alignItems: 'center', backgroundColor: uiColors.accent, borderRadius: 8, flex: 1, justifyContent: 'center', minHeight: 44},
+  saveIdle: {opacity: 0.4},
+  saveText: {color: uiColors.background, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '900', letterSpacing: 0.6},
 });

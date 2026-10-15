@@ -12,7 +12,7 @@ import {clearStoredGithubAccount, readStoredGithubAccount, saveGithubAccount} fr
 import {GITHUB_AUTH_LOGIN_COMMAND, openGithubDeviceLoginUrl} from './src/projects/githubDeviceLogin';
 import type {ProjectSummary} from './src/projects/projectTypes';
 import {WORKSPACE_PROJECTS_DIRECTORY, buildProjectCloneCommand, harnessSessionTarget, printHiddenMarker, workspaceProjectDirectory} from './src/projects/projectCommands';
-import {DISTRO_NAMES, lockedOutMessage, readUserProfile, verifyUserPassword, type LinuxDistro, type ProfileUser, type UserProfile} from './src/profile/profileStore';
+import {DISTRO_NAMES, lockedOutMessage, readUserProfile, updateUserProfile, verifyUserPassword, type LinuxDistro, type ProfileUser, type UserProfile} from './src/profile/profileStore';
 import {setupOnboardingProfile} from './src/profile/onboardingSetup';
 import {readDownloadSources, writeDownloadSources} from './src/terminal/downloadSources';
 import {LoadingScreen} from './src/ui/LoadingScreen';
@@ -650,6 +650,13 @@ function App(): React.JSX.Element {
         onBack={() => setRoute('home')}
         onLogout={logout}
         onSwitchUser={switchUser}
+        onUpdateUser={async updated => {
+          const result = await updateUserProfile(updated);
+          if (result.kind === 'success') {
+            setProfile({users: profile.users.map(candidate => candidate.distro === updated.distro ? updated : candidate)});
+          }
+          return result;
+        }}
         user={signedInUser}
         users={profile.users}
       />

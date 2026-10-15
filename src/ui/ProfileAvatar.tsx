@@ -36,11 +36,11 @@ type ProfileAvatarProps = Readonly<{
   testID?: string;
 }>;
 
-/** A user's hieroglyph on a dark green disc. */
+/** A user's hieroglyph on a dark green rounded square, like the app's tiles. */
 export function ProfileAvatar({avatar, size, selected = false, testID}: ProfileAvatarProps): React.JSX.Element {
   return (
     <View
-      style={[styles.disc, {borderRadius: size / 2, height: size, width: size}, selected && styles.selected]}
+      style={[styles.tile, {borderRadius: Math.round(size * 0.2), height: size, width: size}, selected && styles.selected]}
       testID={testID}>
       <Image accessibilityIgnoresInvertColors resizeMode="contain" source={AVATAR_IMAGES[avatar]} style={{height: size, width: size}} />
     </View>
@@ -48,6 +48,6 @@ export function ProfileAvatar({avatar, size, selected = false, testID}: ProfileA
 }
 
 const styles = StyleSheet.create({
-  disc: {alignItems: 'center', backgroundColor: uiColors.accentSurface, borderColor: uiColors.border, borderWidth: 1, justifyContent: 'center', overflow: 'hidden'},
+  tile: {alignItems: 'center', backgroundColor: uiColors.accentSurface, borderColor: uiColors.border, borderWidth: 1, justifyContent: 'center', overflow: 'hidden'},
   selected: {borderColor: uiColors.accent, borderWidth: 2},
 });

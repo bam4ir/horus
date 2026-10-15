@@ -70,6 +70,17 @@ class ProfileUsersCoreTest {
   }
 
   @Test
+  fun `the signed-in user can change name and avatar and keeps their password`() {
+    assertEquals(ProfileUsersCore.UpdateResult.NOT_FOUND, users.update(debian, "deb", "ibis"))
+    assertEquals(ProfileUsersCore.CreateResult.CREATED, users.create(debian, "deb", "ibis", "secret"))
+    assertEquals(ProfileUsersCore.UpdateResult.INVALID_USERNAME, users.update(debian, "Root!", "ibis"))
+    assertEquals(ProfileUsersCore.UpdateResult.INVALID_AVATAR, users.update(debian, "deb", "unicorn"))
+    assertEquals(ProfileUsersCore.UpdateResult.UPDATED, users.update(debian, "nefer", "scarab"))
+    assertEquals(ProfileUser(debian, "nefer", "scarab"), users.user(debian))
+    assertEquals(ProfileUsersCore.Check.Success, users.verify(debian, "secret"))
+  }
+
+  @Test
   fun `a user is never replaced, so its password cannot be reset`() {
     users.create(debian, "deb", "scarab", "first")
     assertEquals(ProfileUsersCore.CreateResult.EXISTS, users.create(debian, "other", "cat", "second"))

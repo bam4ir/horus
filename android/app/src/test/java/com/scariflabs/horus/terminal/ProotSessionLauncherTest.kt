@@ -309,6 +309,12 @@ class ProotSessionLauncherTest {
       assertEquals("root:x:0:0:root:/root:/bin/sh\nvishesh:x:1000:1000:vishesh:/home/vishesh:/bin/sh\n", passwd.readText())
       assertEquals("root:x:0:\nvishesh:x:1000:\n", group.readText())
       assertEquals("root:!:19000:0:99999:7:::\nvishesh:!:19000:0:99999:7:::\n", shadow.readText())
+
+      // Renamed again from Account after SSH gave the user its login shell.
+      passwd.writeText(passwd.readText().replace("/home/vishesh:/bin/sh", "/home/vishesh:/usr/local/bin/horus-ssh-shell"))
+      launcher(base, hostProc).interactiveShellLaunchSpec(rootfs, home, guestUsername = "nefer")
+      assertEquals("root:x:0:0:root:/root:/bin/sh\nnefer:x:1000:1000:nefer:/home/nefer:/usr/local/bin/horus-ssh-shell\n", passwd.readText())
+      assertEquals("root:x:0:\nnefer:x:1000:\n", group.readText())
     } finally {
       base.deleteRecursively()
     }

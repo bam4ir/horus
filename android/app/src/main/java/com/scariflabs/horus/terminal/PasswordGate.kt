@@ -43,6 +43,9 @@ object PasswordGate {
   fun create(context: Context, distro: String, username: String, avatar: String, password: String): ProfileUsersCore.CreateResult =
     users(context).create(distro, username, avatar, password)
 
+  fun update(context: Context, distro: String, username: String, avatar: String): ProfileUsersCore.UpdateResult =
+    users(context).update(distro, username, avatar)
+
   /** Checks one user's password, or any user's when [distro] is null. */
   fun verify(context: Context, distro: String?, password: String?): ProfileUsersCore.Check =
     users(context).verify(distro, password)

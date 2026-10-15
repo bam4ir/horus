@@ -121,6 +121,35 @@ class HorusDeviceModule(
     )
   }
 
+  /** Renames the signed-in user or changes their avatar; a rename restarts SSH as the new name. */
+  @ReactMethod
+  fun updateProfile(request: ReadableMap, promise: Promise) {
+    fun text(key: String) = request.takeIf { it.hasKey(key) }?.getString(key)
+    val distro = text("distro")
+    val username = text("username")
+    val avatar = text("avatar")
+    val before = distro?.let { TerminalGuestIdentity.readStoredUsername(appContext, it) }
+    val result = if (distro == null || username == null || avatar == null) null else PasswordGate.update(appContext, distro, username, avatar)
+    if (result == ProfileUsersCore.UpdateResult.UPDATED && before != username) {
+      RemoteAccessController(appContext).restartIfEnabled()
+    }
+    promise.resolve(
+      Arguments.createMap().apply {
+        when (result) {
+          ProfileUsersCore.UpdateResult.UPDATED -> putString("status", "success")
+          null -> {
+            putString("status", "error")
+            putString("errorCode", "invalid_request")
+          }
+          else -> {
+            putString("status", "error")
+            putString("errorCode", result.name.lowercase())
+          }
+        }
+      },
+    )
+  }
+
   /** Checks one user's password against the shared attempt limit. */
   @ReactMethod
   fun verifyPassword(request: ReadableMap, promise: Promise) {

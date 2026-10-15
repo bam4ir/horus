@@ -58,4 +58,29 @@ describe('UserAccountScreen', () => {
     expect(renderer.root.findAllByProps({children: 'Couldn’t stop every session. Try again.'}).length).toBeGreaterThan(0);
     await ReactTestRenderer.act(async () => { renderer.unmount(); });
   });
+
+  test('edits only the signed-in user’s name and avatar', async () => {
+    const onUpdateUser = jest.fn(async () => ({kind: 'success'} as const));
+    const {renderer, find} = await render(<UserAccountScreen onBack={() => undefined} onUpdateUser={onUpdateUser} user={ALPINE} users={[ALPINE, DEBIAN]} />);
+    // The other user is listed but has no editor of its own.
+    expect(find('user-account-user-debian')[0].props.right).toBeDefined();
+    await ReactTestRenderer.act(async () => { find('user-account-edit')[0].props.onPress(); });
+    expect(find('user-account-editor').length).toBeGreaterThan(0);
+    expect(find('user-account-edit-save')[0].props.disabled).toBe(true);
+
+    await ReactTestRenderer.act(async () => { find('user-account-username')[0].props.onChangeText('Root!'); });
+    await ReactTestRenderer.act(async () => { find('user-account-edit-save')[0].props.onPress(); });
+    expect(onUpdateUser).not.toHaveBeenCalled();
+    expect(find('user-account-edit-error').length).toBeGreaterThan(0);
+
+    await ReactTestRenderer.act(async () => { find('user-account-username')[0].props.onChangeText('ra'); });
+    await ReactTestRenderer.act(async () => { find('account-avatar-scarab')[0].props.onPress(); });
+    await ReactTestRenderer.act(async () => {
+      find('user-account-edit-save')[0].props.onPress();
+      await Promise.resolve();
+    });
+    expect(onUpdateUser).toHaveBeenCalledWith({distro: 'alpine', username: 'ra', avatar: 'scarab'});
+    expect(find('user-account-editor')).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
 });

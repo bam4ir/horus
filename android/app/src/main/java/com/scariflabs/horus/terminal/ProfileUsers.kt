@@ -42,6 +42,7 @@ class ProfileUsersCore(
   }
 
   enum class CreateResult { CREATED, EXISTS, INVALID_DISTRO, INVALID_USERNAME, INVALID_AVATAR, INVALID_PASSWORD }
+  enum class UpdateResult { UPDATED, NOT_FOUND, INVALID_USERNAME, INVALID_AVATAR }
 
   fun user(distro: String): ProfileUser? {
     if (distro !in DISTROS || !hasVerifier(distro)) return null
@@ -80,6 +81,24 @@ class ProfileUsersCore(
     }
     store.commit(changes)
     return CreateResult.CREATED
+  }
+
+  /**
+   * Renames an existing user or changes their avatar. The password stays;
+   * it belongs to the distribution, not the name. The guest account follows
+   * on its next launch, which renames the profile uid's row.
+   */
+  fun update(distro: String, username: String, avatar: String): UpdateResult {
+    if (distro !in DISTROS || !hasVerifier(distro)) return UpdateResult.NOT_FOUND
+    if (!isValidUsername(username)) return UpdateResult.INVALID_USERNAME
+    if (avatar !in AVATARS) return UpdateResult.INVALID_AVATAR
+    val changes = mutableMapOf<String, Any?>(usernameKey(distro) to username, avatarKey(distro) to avatar)
+    if (distro == RootfsCatalog.DISTRO_ALPINE) {
+      changes[KEY_LEGACY_USERNAME] = null
+      changes[KEY_LEGACY_EMOJI] = null
+    }
+    store.commit(changes)
+    return UpdateResult.UPDATED
   }
 
   /**

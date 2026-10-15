@@ -821,7 +821,8 @@ class ProotSessionLauncher(
       legacyUsername == GUEST_ROOT_USER ||
       fields[4] != legacyUsername ||
       fields[5] != "/home/$legacyUsername" ||
-      fields[6] != "/bin/sh" ||
+      // Remote access gives the profile user its login shell.
+      fields[6] !in setOf("/bin/sh", "/usr/local/bin/horus-ssh-shell") ||
       passwdLines.count { it.substringBefore(':') == legacyUsername } != 1
     ) {
       throw IllegalStateException("legacy profile account does not match the prior format")

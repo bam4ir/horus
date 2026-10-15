@@ -32,6 +32,7 @@ type NativeProfileModule = Readonly<{
   getProfile: () => Promise<unknown>;
   saveProfile: (request: {distro: string; username: string; avatar: string; password: string}) => Promise<unknown>;
   verifyPassword: (request: {distro: string; password: string}) => Promise<unknown>;
+  updateProfile: (request: {distro: string; username: string; avatar: string}) => Promise<unknown>;
 }>;
 
 function nativeProfileModule(): NativeProfileModule | null {
@@ -112,6 +113,21 @@ export async function saveUserProfile(user: NewProfileUser): Promise<SaveProfile
       avatar: user.avatar,
       password: user.password,
     });
+    if (isRecord(response) && response.status === 'success') return {kind: 'success'};
+    const code = isRecord(response) && typeof response.errorCode === 'string' ? response.errorCode : 'internal_error';
+    return {kind: 'error', code};
+  } catch {
+    return {kind: 'error', code: 'internal_error'};
+  }
+}
+
+/** Renames an existing user or changes their avatar; the password is unchanged. */
+export async function updateUserProfile(user: ProfileUser): Promise<SaveProfileResult> {
+  if (usernameProblem(user.username) !== undefined) return {kind: 'error', code: 'invalid_username'};
+  const module = nativeProfileModule();
+  if (module === null) return {kind: 'error', code: 'unavailable'};
+  try {
+    const response = await module.updateProfile({distro: user.distro, username: user.username, avatar: user.avatar});
     if (isRecord(response) && response.status === 'success') return {kind: 'success'};
     const code = isRecord(response) && typeof response.errorCode === 'string' ? response.errorCode : 'internal_error';
     return {kind: 'error', code};

@@ -59,29 +59,36 @@ type AccountFormProps = Readonly<{
   distroName: string;
 }>;
 
+/** The nine hieroglyphs, three across; also used to change the signed-in user's. */
+export function AvatarPicker({value, onChange}: Readonly<{value: AvatarId; onChange: (avatar: AvatarId) => void}>): React.JSX.Element {
+  return (
+    <View accessibilityRole="radiogroup" style={styles.grid} testID="account-avatars">
+      {AVATAR_IDS.map(id => {
+        const selected = value === id;
+        return (
+          <Pressable
+            key={id}
+            accessibilityLabel={AVATAR_LABELS[id]}
+            accessibilityRole="radio"
+            accessibilityState={{checked: selected}}
+            onPress={() => onChange(id)}
+            style={styles.cell}
+            testID={`account-avatar-${id}${selected ? '-selected' : ''}`}>
+            <ProfileAvatar avatar={id} selected={selected} size={60} />
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 /** Pick a hieroglyph, a Linux username, and a password. */
 export function AccountForm({draft, onSubmit, distroName}: AccountFormProps): React.JSX.Element {
   const passwordRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
   const confirmRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
   return (
     <View>
-      <View accessibilityRole="radiogroup" style={styles.grid} testID="account-avatars">
-        {AVATAR_IDS.map(id => {
-          const selected = draft.avatar === id;
-          return (
-            <Pressable
-              key={id}
-              accessibilityLabel={AVATAR_LABELS[id]}
-              accessibilityRole="radio"
-              accessibilityState={{checked: selected}}
-              onPress={() => draft.setAvatar(id)}
-              style={styles.cell}
-              testID={`account-avatar-${id}${selected ? '-selected' : ''}`}>
-              <ProfileAvatar avatar={id} selected={selected} size={60} />
-            </Pressable>
-          );
-        })}
-      </View>
+      <AvatarPicker onChange={draft.setAvatar} value={draft.avatar} />
       <TextInput
         accessibilityLabel="Username"
         autoCapitalize="none"
