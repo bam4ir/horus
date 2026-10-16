@@ -535,7 +535,7 @@ class TerminalSessionService : Service() {
       when {
         current?.state == TerminalSessionSupervisor.SessionState.RUNNING -> {
           supervisor.resize(recoverable.sessionId, rows, columns)
-          sendResponse(reply, startSuccess(requestId, recoverable.sessionId, current.pid, rows, columns))
+          sendResponse(reply, startSuccess(requestId, recoverable.sessionId, current.pid, rows, columns, reattached = true))
           return
         }
         current?.state == TerminalSessionSupervisor.SessionState.EXITED -> {
@@ -1379,12 +1379,22 @@ class TerminalSessionService : Service() {
     putString(TerminalSessionServiceProtocol.KEY_ERROR_CODE, errorCode)
   }
 
-  private fun startSuccess(requestId: String, sessionId: String, pid: Int, rows: Int, columns: Int): Bundle =
+  private fun startSuccess(
+    requestId: String,
+    sessionId: String,
+    pid: Int,
+    rows: Int,
+    columns: Int,
+    reattached: Boolean = false,
+  ): Bundle =
     successResponse(requestId).apply {
       putString(TerminalSessionServiceProtocol.KEY_SESSION_ID, sessionId)
       putInt(TerminalSessionServiceProtocol.KEY_PID, pid)
       putInt(TerminalSessionServiceProtocol.KEY_ROWS, rows)
       putInt(TerminalSessionServiceProtocol.KEY_COLUMNS, columns)
+      // The screen must treat this like a resume: the install already
+      // finished, and the session is the user's to keep if attaching fails.
+      if (reattached) putBoolean(TerminalSessionServiceProtocol.KEY_REATTACHED, true)
     }
 
   private fun mapSessionFailureCode(reasonCode: String): String = when (reasonCode) {

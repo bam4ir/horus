@@ -334,6 +334,8 @@ export type StartSessionResponse = {
   pid?: number;
   rows?: number;
   columns?: number;
+  /** The service handed back a session that was already running. */
+  reattached?: boolean;
   errorCode?: TerminalRuntimeErrorCode;
 };
 

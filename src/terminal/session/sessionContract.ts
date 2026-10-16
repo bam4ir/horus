@@ -385,7 +385,8 @@ export function isStartSessionResponse(value: unknown, requestId: string): value
   if (value.status === 'error') return isValidSessionError(value, requestId);
   if (value.status !== 'success') return false;
   return (
-    hasOnlyKeys(value, ['requestId', 'status', 'sessionId', 'pid', 'rows', 'columns']) &&
+    hasOnlyKeys(value, ['requestId', 'status', 'sessionId', 'pid', 'rows', 'columns', 'reattached']) &&
+    (value.reattached === undefined || value.reattached === true) &&
     isValidTerminalSessionId(value.sessionId) &&
     isSafeIntegerInRange(value.pid, 1, Number.MAX_SAFE_INTEGER) &&
     isValidTerminalSessionRows(value.rows) &&
@@ -651,7 +652,7 @@ export type TrustedSessionOperation = Readonly<
 >;
 
 export type TrustedSessionStart = Readonly<
-  | {kind: 'success'; sessionId: string; pid: number; rows: number; columns: number}
+  | {kind: 'success'; sessionId: string; pid: number; rows: number; columns: number; reattached: boolean}
   | {kind: 'error'; errorCode: TerminalSessionOperationErrorCode}
 >;
 

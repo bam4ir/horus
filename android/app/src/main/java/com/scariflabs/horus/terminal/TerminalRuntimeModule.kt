@@ -1084,6 +1084,7 @@ class TerminalRuntimeModule(
       }
       putInt("rows", response.getInt(TerminalSessionServiceProtocol.KEY_ROWS, rows))
       putInt("columns", response.getInt(TerminalSessionServiceProtocol.KEY_COLUMNS, columns))
+      if (response.getBoolean(TerminalSessionServiceProtocol.KEY_REATTACHED, false)) putBoolean("reattached", true)
     }
   }
 

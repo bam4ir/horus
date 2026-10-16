@@ -566,6 +566,10 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
 
   const startPtySession = React.useCallback(async (sessionToResume?: string) => {
     let sessionId: string;
+    // A resumed session, or one the service handed back because it was
+    // already running: its install finished long ago, and it stays the
+    // user's if this screen fails to attach.
+    let resumed = sessionToResume !== undefined;
     if (sessionToResume !== undefined) {
       // The running session's terminal size is not known here: it may have
       // been sized with the keyboard hidden, or by another screen. Leave it
@@ -590,7 +594,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         // App and shell sessions outlive their screen, and the service hands
         // the same running session to the next screen that starts this
         // command. Stopping it here would kill the remounted screen's session.
-        if (started.kind === 'success' && stopSessionOnUnmount) {
+        if (started.kind === 'success' && stopSessionOnUnmount && !started.reattached) {
           await client.stopSession(nextRequestId('late-stop'), started.sessionId, 'screen_unmount');
         }
         return;
@@ -605,13 +609,17 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       }
       sessionId = started.sessionId;
       requestedSizeRef.current = {rows: started.rows, columns: started.columns};
+      if (started.reattached) {
+        resumed = true;
+        installReadyRef.current = true;
+      }
     }
     if (!mountedRef.current) return;
     lastOutputSeqRef.current = 0;
     activeSessionRef.current = sessionId;
     setTerminalInputSessionId(nativeTerminalInput ? sessionId : undefined);
     setNativeSessionId(nativeHarness ? sessionId : undefined);
-    setNativeHarnessReady(nativeHarness && sessionToResume !== undefined);
+    setNativeHarnessReady(nativeHarness && resumed);
     displayBufferRef.current = nativeHarness ? undefined : new TerminalCellBuffer(requestedSizeRef.current ?? sizeRef.current, {
       onChange: nextFrame => {
         if (!mountedRef.current) return;
@@ -634,12 +642,12 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
         disposeAttachment();
         const activeSession = activeSessionRef.current;
         activeSessionRef.current = undefined;
-        if (activeSession !== undefined && sessionToResume === undefined) {
+        if (activeSession !== undefined && !resumed) {
           void client.stopSession(nextRequestId('renderer-stop'), activeSession, 'screen_unmount');
         }
       },
     });
-    if (sessionToResume !== undefined && displayBufferRef.current !== undefined) setFrame(displayBufferRef.current.snapshot());
+    if (resumed && displayBufferRef.current !== undefined) setFrame(displayBufferRef.current.snapshot());
     const attachment: TerminalSessionAttachment = {
       onOutput: chunk => {
         if (!mountedRef.current) return;
@@ -717,7 +725,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       );
       if (subscription.kind !== 'success') {
         disposeAttachment();
-        if (sessionToResume === undefined) {
+        if (!resumed) {
           await client.stopSession(nextRequestId('subscribe-failed-stop'), sessionId, 'screen_unmount');
         }
         activeSessionRef.current = undefined;
@@ -738,7 +746,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       }
     } catch {
       disposeAttachment();
-      if (sessionToResume === undefined) {
+      if (!resumed) {
         await client.stopSession(nextRequestId('subscribe-error-stop'), sessionId, 'screen_unmount');
       }
       activeSessionRef.current = undefined;

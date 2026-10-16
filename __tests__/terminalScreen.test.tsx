@@ -479,6 +479,32 @@ describe('TerminalScreen', () => {
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
+  test('a shell reopened from its tile while still running closes cleanly, not as a failed install', async () => {
+    const runtime = fakeRuntime();
+    // The service hands back the running shell; its ready marker went by long ago.
+    runtime.spec.startSession = async (request: {requestId: string; rows?: number; columns?: number}) => (
+      {requestId: request.requestId, status: 'success', sessionId: 's-1-1', pid: 1, rows: request.rows ?? 24, columns: request.columns ?? 80, reattached: true}
+    );
+    const client = new TerminalSessionClient(runtime.spec, handler => {
+      runtime.listeners.push(handler);
+      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
+    });
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="zsh -l" toolchain="shell" />);
+      await flushAsync();
+    });
+    await ReactTestRenderer.act(async () => {
+      // Ctrl+D at the prompt.
+      runtime.emit({type: 'exit', sessionId: 's-1-1', reason: 'process_exit', exitCode: 0});
+      await flushAsync();
+    });
+    expect(renderer.root.findAllByProps({testID: 'terminal-install-failed'})).toHaveLength(0);
+    expect(renderer.root.findAllByProps({testID: 'terminal-app-exited'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'terminal-app-report'})).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
+  });
+
   test('shows install progress instead of the apk transcript on first launch, with the log one tap away', async () => {
     const runtime = fakeRuntime();
     const client = new TerminalSessionClient(runtime.spec, handler => {

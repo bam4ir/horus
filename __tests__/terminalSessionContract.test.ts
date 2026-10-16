@@ -189,6 +189,10 @@ describe('wire response validators', () => {
     expect(isStartSessionResponse({...success, rows: 999}, 'r-1')).toBe(false);
     expect(isStartSessionResponse({...success, requestId: 'other'}, 'r-1')).toBe(false);
     expect(isStartSessionResponse({...success, signal: undefined}, 'r-1')).toBe(false);
+    // A session the service handed back because it was already running.
+    expect(isStartSessionResponse({...success, reattached: true}, 'r-1')).toBe(true);
+    expect(isStartSessionResponse({...success, reattached: false}, 'r-1')).toBe(false);
+    expect(isStartSessionResponse({...success, reattached: 'yes'}, 'r-1')).toBe(false);
     expect(
       isStartSessionResponse(
         {requestId: 'r-1', status: 'error', errorCode: 'session_limit_reached'},
