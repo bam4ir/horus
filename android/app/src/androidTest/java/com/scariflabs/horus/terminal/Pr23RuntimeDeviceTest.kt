@@ -111,7 +111,7 @@ class Pr23RuntimeDeviceTest {
         sessionCommand = "exec python3 ${'$'}HOME/pr23-socket.py"))
       assertTrue(socket.contains("PR23_SOCKET_OK uid=61001"))
 
-      run(launcher.toolchainProvisionLaunchSpec(rootfs, paths.home, "codex"))
+      run(launcher.toolchainProvisionLaunchSpec(rootfs, paths.home, "codex"), 480)
       assertTrue("native ARM64 payload was not ready", launcher.hasProvisionedToolchain(rootfs, paths.home, "codex"))
       val codex = run(launcher.interactiveShellLaunchSpec(rootfs, paths.home, sessionCommand = """
         set -eu
@@ -142,7 +142,7 @@ class Pr23RuntimeDeviceTest {
     }
   }
 
-  @Test(timeout = 600_000)
+  @Test(timeout = 900_000)
   fun codexReadinessAndHardlinkLifecycleRecovery() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     assertTrue("use the isolated validation package", context.packageName.endsWith(".pr23check"))
@@ -162,7 +162,8 @@ class Pr23RuntimeDeviceTest {
     fun run(launch: ProotSessionLauncher.LaunchSpec) {
       val log = File(paths.base, "recovery.log")
       val guest = process(launch, log)
-      if (!guest.waitFor(300, TimeUnit.SECONDS)) { guest.destroyForcibly(); fail(log.readText().takeLast(3000)) }
+      // Provisioning now also installs python3 for sudo before Codex's ~150 MB download.
+      if (!guest.waitFor(480, TimeUnit.SECONDS)) { guest.destroyForcibly(); fail(log.readText().takeLast(3000)) }
       assertEquals(log.readText().takeLast(3000), 0, guest.exitValue())
     }
     try {
