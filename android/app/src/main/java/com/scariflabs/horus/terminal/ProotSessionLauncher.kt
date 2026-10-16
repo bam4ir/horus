@@ -1168,7 +1168,9 @@ class ProotSessionLauncher(
       return readyMarker.isFile && hasClaudeLauncher(guestHomeDir)
     }
     val rootfsNode = File(rootfsDir, "usr/bin/node").let { it.isFile && it.canExecute() }
-    val rootfsNpm = File(rootfsDir, "usr/bin/npm").let { it.isFile && it.canExecute() }
+    // apk installs npm in /usr/bin; on Debian it is npm's own release in /usr/local/bin.
+    val rootfsNpm = listOf(File(rootfsDir, "usr/bin/npm"), File(rootfsDir, "usr/local/bin/npm"))
+      .any { it.isFile && it.canExecute() }
     val launcher = when (target) {
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "claude"
       TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "codex"
@@ -1379,6 +1381,11 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
      * it cannot drop to its _apt sandbox user, and refreshes its lists at
      * most once a day.
      */
+    /** npm release installed on Debian, and its registry `dist.integrity`. */
+    internal const val UPSTREAM_NPM_VERSION = "11.12.1"
+    internal const val UPSTREAM_NPM_INTEGRITY =
+      "sha512-zcoUuF1kezGSAo0CqtvoLXX3mkRqzuqYdL6Y5tdo8g69NVV3CkjQ6ZBhBgB4d7vGkPcV6TcvLi3GRKPDFX+xTA=="
+
     internal val PACKAGE_MANAGER_SCRIPT = """
       if [ -x /usr/bin/apt-get ]; then
         horus_pkg=apt
@@ -1390,7 +1397,8 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         }
         pkgs_github="ca-certificates git openssh-client gh zsh"
         pkgs_claude="bash curl ca-certificates git openssh-client zsh"
-        pkgs_node="bash ca-certificates git openssh-client nodejs npm zsh"
+        # npm itself comes from npm's own release; see install_upstream_npm.
+        pkgs_node="bash ca-certificates git openssh-client nodejs zsh"
         pkgs_procps="procps"
         # Rewritten every time so an older Horus's settings are replaced.
         mkdir -p /etc/apt/apt.conf.d /etc/dpkg/dpkg.cfg.d
@@ -1464,6 +1472,44 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         wait "${'$'}pkg_watch_pid" 2>/dev/null || true
         : > "${'$'}pkg_progress"
         return "${'$'}pkg_result"
+      }
+      # Debian's npm (9.2) needs ~400 node-* packages, and its cache moves
+      # files with link, then unlink and chmod in parallel, which races
+      # under PRoot's link2symlink (npm ERR! ENOENT ... rename). Install
+      # npm's own release instead: one pinned tarball, checked against its
+      # registry checksum, with its dependencies bundled.
+      upstream_npm_dir=/usr/local/lib/node_modules/npm
+      has_upstream_npm() {
+        [ -x /usr/local/bin/npm ] && grep -q '"version": "$UPSTREAM_NPM_VERSION"' "${'$'}upstream_npm_dir/package.json" 2>/dev/null
+      }
+      install_upstream_npm() {
+        npm_registry=${'$'}{npm_config_registry:-https://registry.npmjs.org}
+        npm_registry=${'$'}{npm_registry%/}
+        npm_work=${'$'}(mktemp -d /root/.cache/horus/npm.XXXXXX) || return 1
+        if node -e '
+          const [url, integrity, out] = process.argv.slice(1);
+          (async () => {
+            const response = await fetch(url, {signal: AbortSignal.timeout(300000)});
+            if (!response.ok) throw new Error("npm download failed: HTTP " + response.status);
+            const body = Buffer.from(await response.arrayBuffer());
+            const digest = "sha512-" + require("crypto").createHash("sha512").update(body).digest("base64");
+            if (digest !== integrity) throw new Error("npm download failed its checksum");
+            require("fs").writeFileSync(out, body);
+          })().catch(error => { console.error(error.message); process.exit(1); });
+        ' "${'$'}npm_registry/npm/-/npm-$UPSTREAM_NPM_VERSION.tgz" "$UPSTREAM_NPM_INTEGRITY" "${'$'}npm_work/npm.tgz" &&
+          mkdir -p "${'$'}npm_work/npm" /usr/local/lib/node_modules /usr/local/bin &&
+          tar -xzf "${'$'}npm_work/npm.tgz" -C "${'$'}npm_work/npm" --strip-components=1 &&
+          rm -rf "${'$'}upstream_npm_dir" &&
+          mv "${'$'}npm_work/npm" "${'$'}upstream_npm_dir" &&
+          printf '#!/bin/sh\nexec node %s/bin/npm-cli.js "$@"\n' "${'$'}upstream_npm_dir" > /usr/local/bin/npm &&
+          printf '#!/bin/sh\nexec node %s/bin/npx-cli.js "$@"\n' "${'$'}upstream_npm_dir" > /usr/local/bin/npx &&
+          chmod 755 /usr/local/bin/npm /usr/local/bin/npx; then
+          npm_result=0
+        else
+          npm_result=1
+        fi
+        rm -rf "${'$'}npm_work"
+        return "${'$'}npm_result"
       }
     """.trimIndent()
     // npm may successfully install the JS wrapper while skipping its optional
@@ -1774,10 +1820,21 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
             fi
           fi
         fi
-      elif ! command -v zsh >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-        mark_provision_stage apk
-        if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_node; then
-          if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+      else
+        # Debian's npm is installed separately below, so only apk's counts here.
+        if ! command -v zsh >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || { [ "${'$'}horus_pkg" = apk ] && ! command -v npm >/dev/null 2>&1; }; then
+          mark_provision_stage apk
+          if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_node; then
+            if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || { [ "${'$'}horus_pkg" = apk ] && ! command -v npm >/dev/null 2>&1; }; then
+              mark_provision_stage apk_failed
+              exit 21
+            fi
+          fi
+        fi
+        # Also replaces the npm 9 an earlier 1.0.5 build installed with apt.
+        if [ "${'$'}horus_pkg" = apt ] && ! has_upstream_npm; then
+          mark_provision_stage apk
+          if ! install_upstream_npm >>/root/.cache/horus/alpine-bootstrap.log 2>&1; then
             mark_provision_stage apk_failed
             exit 21
           fi

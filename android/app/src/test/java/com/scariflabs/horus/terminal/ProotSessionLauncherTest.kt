@@ -1088,6 +1088,13 @@ class ProotSessionLauncherTest {
       val launcher = launcher(base, hostProc)
 
       assertTrue(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE))
+      // Debian's npm is npm's own release in /usr/local/bin.
+      val debianNpm = File(rootfs, "usr/local/bin/npm").apply { requireNotNull(parentFile).mkdirs() }
+      assertTrue(File(rootfs, "usr/bin/npm").renameTo(debianNpm))
+      assertTrue(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE))
+      assertTrue(debianNpm.delete())
+      assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE))
+      File(rootfs, "usr/bin/npm").apply { writeText("npm"); setExecutable(true) }
       val currentMtime = Files.getLastModifiedTime(payloadTarget.toPath()).toMillis()
       Files.setLastModifiedTime(payloadTarget.toPath(), FileTime.fromMillis(currentMtime + 2_000))
       assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE))
