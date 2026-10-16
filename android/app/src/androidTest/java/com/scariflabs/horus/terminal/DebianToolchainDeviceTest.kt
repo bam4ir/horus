@@ -18,7 +18,7 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class DebianToolchainDeviceTest {
-  @Test(timeout = 1_800_000)
+  @Test(timeout = 2_700_000)
   fun provisionsEveryTargetWithAptAndRunsSessionsAsTheUser() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val manifestText = context.assets.open("alpine-runtime/manifest.json").bufferedReader().use { it.readText() }

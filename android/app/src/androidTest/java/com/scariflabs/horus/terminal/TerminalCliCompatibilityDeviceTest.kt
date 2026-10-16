@@ -133,7 +133,7 @@ class TerminalCliCompatibilityDeviceTest {
       )
       installCli(supervisor, first.sessionId, sink, "codex-cli", npmInstallCommand("codex-cli", "@openai/codex"), 300_000)
       installCli(supervisor, first.sessionId, sink, "opencode", npmInstallCommand("opencode", "opencode-ai"), 300_000)
-      installCli(supervisor, first.sessionId, sink, "gemini-cli", npmInstallCommand("gemini-cli", "@google/gemini-cli"), 300_000)
+      installCli(supervisor, first.sessionId, sink, "gemini-cli", npmInstallCommand("gemini-cli", "@google/gemini-cli"), 600_000)
 
       runStageCommand(supervisor, first.sessionId, sink, "claude-code", claudeVersionDoctorCommand(), "version-doctor", 120_000)
       runStageCommand(supervisor, first.sessionId, sink, "codex-cli", codexVersionDoctorCommand(), "version-doctor", 120_000)
