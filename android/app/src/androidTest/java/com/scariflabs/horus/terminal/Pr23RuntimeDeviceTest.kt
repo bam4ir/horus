@@ -38,7 +38,7 @@ class Pr23RuntimeDeviceTest {
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val dns = connectivity.activeNetwork?.let { connectivity.getLinkProperties(it)?.dnsServers }
       ?.mapNotNull { it.hostAddress }.orEmpty()
-    val launcher = ProotSessionLauncher(runtime, paths.guestTmp, dnsServersProvider = { dns })
+    val launcher = ProotSessionLauncher(runtime, paths.guestTmp, dnsServersProvider = { dns }, seccompAcceleration = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("horusSeccomp") == "on",)
 
     fun run(launch: ProotSessionLauncher.LaunchSpec, seconds: Long = 300): String {
       val log = File(testRoot, "guest-command.log")
@@ -153,7 +153,7 @@ class Pr23RuntimeDeviceTest {
     val store = DistroStoreCore(paths, HttpArchiveDownloader(), SafeTarExtractor(), ProotGuestProber(runtime, paths.guestTmp))
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val dns = connectivity.activeNetwork?.let { connectivity.getLinkProperties(it)?.dnsServers }?.mapNotNull { it.hostAddress }.orEmpty()
-    val launcher = ProotSessionLauncher(runtime, paths.guestTmp, dnsServersProvider = { dns })
+    val launcher = ProotSessionLauncher(runtime, paths.guestTmp, dnsServersProvider = { dns }, seccompAcceleration = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("horusSeccomp") == "on",)
     fun process(launch: ProotSessionLauncher.LaunchSpec, log: File): Process = ProcessBuilder(launch.argv).apply {
       environment().clear()
       launch.environment.forEach { entry -> environment()[entry.substringBefore('=')] = entry.substringAfter('=') }

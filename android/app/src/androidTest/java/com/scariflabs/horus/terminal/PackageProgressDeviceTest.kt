@@ -45,6 +45,7 @@ class PackageProgressDeviceTest {
         scratchDir = paths.guestTmp,
         hardlinkDir = paths.hardlinks,
         dnsServersProvider = { dnsServers },
+        seccompAcceleration = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("horusSeccomp") == "on",
       )
       try {
         val install = store.install(entry = entry, downloadTimeoutMs = 300_000)

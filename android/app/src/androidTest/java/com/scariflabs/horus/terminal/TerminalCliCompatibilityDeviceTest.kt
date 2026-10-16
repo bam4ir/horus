@@ -97,6 +97,7 @@ class TerminalCliCompatibilityDeviceTest {
       runtime = runtime,
       scratchDir = paths.guestTmp,
       dnsServersProvider = { dnsServers },
+      seccompAcceleration = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("horusSeccomp") == "on",
     )
     listener.respondToCursorQuery = { sessionId ->
       supervisor.write(sessionId, "\u001b[1;14R".toByteArray(Charsets.ISO_8859_1))
@@ -284,6 +285,8 @@ class TerminalCliCompatibilityDeviceTest {
     val deadline = System.currentTimeMillis() + timeoutMs
     while (System.currentTimeMillis() < deadline) {
       val lines = sink.textFrom(offset).replace('\r', '\n').split('\n').filter(String::isNotEmpty)
+        // The previous command's prompt can land in front of a marker.
+        .map { it.replace(LEADING_PROMPT, "") }
       val match = lines.firstOrNull { line -> if (exact) line == prefix else line.startsWith(prefix) }
       if (match != null) return match
       Thread.sleep(100)
@@ -443,5 +446,6 @@ class TerminalCliCompatibilityDeviceTest {
   private companion object {
     val CLI_IDS = listOf("claude-code", "codex-cli", "opencode", "gemini-cli")
     const val LOG_TAG = "AlpineP6CliMatrixDeviceTest"
+    val LEADING_PROMPT = Regex("^\\S*# ")
   }
 }

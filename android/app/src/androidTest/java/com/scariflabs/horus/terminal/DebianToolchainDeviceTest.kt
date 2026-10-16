@@ -43,6 +43,7 @@ class DebianToolchainDeviceTest {
       scratchDir = paths.guestTmp,
       hardlinkDir = paths.hardlinks,
       dnsServersProvider = { dnsServers },
+      seccompAcceleration = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("horusSeccomp") == "on",
     )
     val debian = RootfsCatalog.DISTRO_DEBIAN
 
