@@ -2,6 +2,21 @@
 
 Tracking: [#3](https://github.com/scarif-labs/horus/issues/3)
 
+## Status (2026-10-16)
+
+Ready for release as 1.0.5, pending merge. Testing is recorded in
+`docs/plans/release-1.0.5-testing.md`: upgrade from 1.0.4, rename,
+second user, downgrade (rename back to `horus` first), host tests, and
+the device tests on an emulator all pass. Since 2026-10-15:
+
+- `sudo` works from the first sign-in: python3 is installed with the base
+  packages for every target (`d455985`).
+- Renaming a user keeps `/home/<old name>` as a link to the new home.
+
+Still open: the gid 1000 group name (cosmetic), SSH logins on Debian
+cannot install Node.js, the status-bar overlap on first launch, and slow
+Codex installs on Debian (apt's node-* packages).
+
 ## Status (2026-10-15)
 
 Branch `debian-rootfs`, PR #21. Main (with #9 and #23) is merged in;
