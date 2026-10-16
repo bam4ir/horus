@@ -4,8 +4,8 @@ Tracking: [#3](https://github.com/scarif-labs/horus/issues/3)
 
 ## Status (2026-10-16)
 
-Ready for release as 1.0.5, pending merge. Testing is recorded in
-`docs/plans/release-1.0.5-testing.md`: upgrade from 1.0.4, rename,
+Ready for release as 1.1.0, pending merge. Testing is recorded in
+`docs/plans/release-1.1.0-testing.md`: upgrade from 1.0.4, rename,
 second user, downgrade (rename back to `horus` first), host tests, and
 the device tests on an emulator all pass. Since 2026-10-15:
 
@@ -13,9 +13,12 @@ the device tests on an emulator all pass. Since 2026-10-15:
   packages for every target (`d455985`).
 - Renaming a user keeps `/home/<old name>` as a link to the new home.
 
+Codex and OpenCode on Debian now install npm's own release instead of
+apt's npm 9 (`3e60be9`), which removes the ~400 node-* packages and an
+npm ENOENT race under PRoot.
+
 Still open: the gid 1000 group name (cosmetic), SSH logins on Debian
-cannot install Node.js, the status-bar overlap on first launch, and slow
-Codex installs on Debian (apt's node-* packages).
+cannot install Node.js, and the status-bar overlap on first launch.
 
 ## Status (2026-10-15)
 

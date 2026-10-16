@@ -1831,7 +1831,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
             fi
           fi
         fi
-        # Also replaces the npm 9 an earlier 1.0.5 build installed with apt.
+        # Also replaces the npm 9 that pre-release Debian builds installed with apt.
         if [ "${'$'}horus_pkg" = apt ] && ! has_upstream_npm; then
           mark_provision_stage apk
           if ! install_upstream_npm >>/root/.cache/horus/alpine-bootstrap.log 2>&1; then
