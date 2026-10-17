@@ -1395,7 +1395,7 @@ describe('TerminalScreen', () => {
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
-  test('renders trusted URLs as clickable links and opens them externally', async () => {
+  test('renders URLs as clickable links and opens them externally', async () => {
     const runtime = fakeRuntime();
     const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
     const client = new TerminalSessionClient(runtime.spec, handler => {
@@ -1412,7 +1412,7 @@ describe('TerminalScreen', () => {
         type: 'output',
         sessionId: 's-1-1',
         seq: 1,
-        base64: encodeTestBase64('https://claude.ai/oauth/authorize\nhttp://localhost:3000\nhttps://example.com\n'),
+        base64: encodeTestBase64('https://claude.ai/oauth/authorize\nhttp://localhost:3000\nhttps://user@example.com\n'),
       });
       await flushAsync();
     });

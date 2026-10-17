@@ -7,8 +7,8 @@ import java.util.regex.Pattern
  * Trusted-URL detection for one native terminal row. The rules mirror
  * src/terminal/terminalLinks.ts (`findTrustedTerminalLinks` and
  * `isTrustedTerminalUrl`): HTTP(S) only, a boundary before the scheme,
- * trailing prose punctuation and unbalanced closing brackets trimmed, and only
- * local-development or named provider hosts.
+ * trailing prose punctuation and unbalanced closing brackets trimmed, and a
+ * well-formed host without credentials.
  *
  * Ranges are computed once when a [NativeTerminalEngine.FrameRow] is built.
  * A row without a literal "://" returns [NONE] after one allocation-free cell
@@ -35,15 +35,6 @@ internal object NativeTerminalLinks {
   private val IPV6_PATTERN: Pattern = Pattern.compile("^(\\[[0-9a-f:]+\\])(?::(\\d{1,5}))?$", Pattern.CASE_INSENSITIVE)
   private val HOST_PATTERN: Pattern = Pattern.compile("^([a-z0-9.-]+)(?::(\\d{1,5}))?$", Pattern.CASE_INSENSITIVE)
   private val LABEL_PATTERN: Pattern = Pattern.compile("^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$", Pattern.CASE_INSENSITIVE)
-  private val TRUSTED_DOMAIN_ROOTS = arrayOf(
-    "github.com",
-    "anthropic.com",
-    "claude.ai",
-    "claude.com",
-    "openai.com",
-    "chatgpt.com",
-    "opencode.ai",
-  )
 
   /**
    * Returns link ranges as [start, end) column pairs, or [NONE]. [text] and
@@ -298,17 +289,13 @@ internal object NativeTerminalLinks {
 
     val ipv6 = IPV6_PATTERN.matcher(authority)
     if (ipv6.matches()) {
-      if (!isValidPort(ipv6.group(2))) return false
-      val hostname = ipv6.group(1)!!.let { it.substring(1, it.length - 1) }.lowercase()
-      return hostname == "::1"
+      return isValidPort(ipv6.group(2))
     }
 
     val host = HOST_PATTERN.matcher(authority)
     if (!host.matches() || !isValidPort(host.group(2))) return false
     val hostname = host.group(1)!!.removeSuffix(".").lowercase()
-    if (hostname.split('.').any { !LABEL_PATTERN.matcher(it).matches() }) return false
-    if (hostname == "localhost" || hostname.endsWith(".localhost") || hostname == "127.0.0.1") return true
-    return TRUSTED_DOMAIN_ROOTS.any { hostname == it || hostname.endsWith(".$it") }
+    return hostname.split('.').all { LABEL_PATTERN.matcher(it).matches() }
   }
 
   private fun isValidPort(port: String?): Boolean {

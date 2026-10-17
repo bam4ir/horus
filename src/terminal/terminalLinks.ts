@@ -1,15 +1,5 @@
 import {Linking} from 'react-native';
 
-const TRUSTED_DOMAIN_ROOTS = [
-  'github.com',
-  'anthropic.com',
-  'claude.ai',
-  'claude.com',
-  'openai.com',
-  'chatgpt.com',
-  'opencode.ai',
-] as const;
-
 const HTTP_LINK_PATTERN = /https?:\/\/[^\s<>"'\x60]+/gi;
 const URL_BOUNDARIES = "\"'()<>{},;:=[]";
 
@@ -36,8 +26,7 @@ function trustedHostnameFromUrl(value: string): string | undefined {
   const ipv6Match = /^(\[[0-9a-f:]+\])(?::(\d{1,5}))?$/i.exec(authority);
   if (ipv6Match !== null) {
     if (!isValidPort(ipv6Match[2])) return undefined;
-    const hostname = ipv6Match[1].slice(1, -1).toLowerCase();
-    return hostname === '::1' ? hostname : undefined;
+    return ipv6Match[1].slice(1, -1).toLowerCase();
   }
 
   const hostMatch = /^([a-z0-9.-]+)(?::(\d{1,5}))?$/i.exec(authority);
@@ -48,17 +37,13 @@ function trustedHostnameFromUrl(value: string): string | undefined {
   return hostname;
 }
 
-/** Only HTTP(S) links for local development and named provider domains may open. */
+/**
+ * Any well-formed HTTP(S) link may open: Horus users are developers. Links
+ * with credentials (`https://github.com@evil.example`) or control characters
+ * are refused, since their visible host is not where they go.
+ */
 export function isTrustedTerminalUrl(value: string): boolean {
-  const hostname = trustedHostnameFromUrl(value);
-  if (hostname === undefined) return false;
-  if (
-    hostname === 'localhost' ||
-    hostname.endsWith('.localhost') ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1'
-  ) return true;
-  return TRUSTED_DOMAIN_ROOTS.some(domain => hostname === domain || hostname.endsWith('.' + domain));
+  return trustedHostnameFromUrl(value) !== undefined;
 }
 
 function trimTerminalPunctuation(value: string): string {
