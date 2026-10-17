@@ -29,6 +29,10 @@ class ProotSessionLauncherTest {
     }
     checkStatus(0, "false\nexit\n", true)
     checkStatus(0, "false\n", true)
+    // Ctrl-C leaves $? at 130; a bare exit afterwards is still a clean close.
+    checkStatus(0, "sh -c 'kill -INT ${'$'}${'$'}'\nexit\n", true)
+    checkStatus(0, "sh -c 'kill -INT ${'$'}${'$'}'\n", true)
+    checkStatus(23, "exit 23\n", true)
     checkStatus(137, "exit 137\n", true)
     checkStatus(137, "kill -KILL ${'$'}${'$'}\n", true)
     checkStatus(23, "exit 23\n", false)

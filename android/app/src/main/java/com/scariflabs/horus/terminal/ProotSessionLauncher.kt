@@ -1293,10 +1293,13 @@ class ProotSessionLauncher(
       $ZSH_PROFILE_END
     """.trimIndent()
     internal val ZSH_EXIT_SCRIPT = """
-      # Interactive exit/EOF must not inherit a failed build's status.
-      # Keep signal-style statuses, and never apply this to command shells.
+      # A bare exit or EOF must not inherit the last command's status (a failed
+      # build, or 130 after Ctrl-C). An explicit `exit N` keeps N. A killed
+      # shell never runs zshexit, so its status still reports the crash.
+      # Never apply this to command shells.
       if [[ -o interactive && -z "${'$'}{ZSH_EXECUTION_STRING-}" ]]; then
-        zshexit() { (( ${'$'}? > 128 )) || exit 0; }
+        exit() { (( ${'$'}# )) && horus_exit_status=1; builtin exit "${'$'}@"; }
+        zshexit() { [[ -n ${'$'}{horus_exit_status-} ]] || exit 0; }
       fi
     """.trimIndent()
     internal val DOTNET_ENV_SCRIPT = """
