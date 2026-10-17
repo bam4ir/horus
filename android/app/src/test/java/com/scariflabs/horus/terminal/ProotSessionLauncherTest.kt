@@ -43,6 +43,64 @@ class ProotSessionLauncherTest {
   }
 
   @Test
+  fun loginZshOnATerminalExitsCleanlyAfterCtrlCEvenWithAZlogoutFile() {
+    // Debian's login shell sources /etc/zsh/zlogout, which makes zsh ignore an
+    // exit inside zshexit. It only shows on a real terminal, so drive zsh
+    // through a pty: as in the app, a login shell with the line editor on.
+    val zsh = System.getenv("HORUS_TEST_ZSH") ?: "/usr/bin/zsh"
+    org.junit.Assume.assumeTrue("zsh required for shell behavior test", File(zsh).canExecute())
+    val python = listOf("/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3")
+      .firstOrNull { File(it).canExecute() }
+    org.junit.Assume.assumeTrue("python3 required for the pty driver", python != null)
+    val zdotdir = Files.createTempDirectory("horus-zdot").toFile()
+    try {
+      File(zdotdir, ".zshrc").writeText(ProotSessionLauncher.ZSH_EXIT_SCRIPT + "\n")
+      File(zdotdir, ".zlogout").writeText("# like Debian's /etc/zsh/zlogout\n")
+      val driver = File(zdotdir, "drive_zsh.py").apply {
+        writeText(
+          """
+          import os, pty, select, sys, time
+          pid, fd = pty.fork()
+          if pid == 0:
+              os.execv(sys.argv[1], ['zsh', '-l'])
+          def drain(seconds):
+              end = time.time() + seconds
+              while time.time() < end:
+                  try:
+                      if select.select([fd], [], [], 0.05)[0]: os.read(fd, 4096)
+                  except OSError:
+                      return
+          drain(1.0)
+          for key in sys.argv[2:]:
+              os.write(fd, {'^C': b'\x03', '^D': b'\x04'}.get(key) or key.encode() + b'\r')
+              drain(0.6)
+          drain(1.0)
+          print(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))
+          """.trimIndent(),
+        )
+      }
+      fun checkStatus(expected: Int, vararg keys: String) {
+        val process = ProcessBuilder(listOf(python!!, driver.absolutePath, zsh) + keys)
+          .redirectErrorStream(true)
+          .apply { environment()["ZDOTDIR"] = zdotdir.absolutePath }
+          .start()
+        assertTrue("zsh pty fixture timed out", process.waitFor(30, TimeUnit.SECONDS))
+        val output = process.inputStream.bufferedReader().readText().trim()
+        assertEquals("keys=${keys.toList()}", expected.toString(), output.lineSequence().last())
+      }
+      checkStatus(0, "exit")
+      checkStatus(0, "sleep 100", "^C", "exit")
+      checkStatus(0, "sleep 100", "^C", "^D")
+      checkStatus(0, "false", "^D")
+      checkStatus(0, "false", "logout")
+      checkStatus(23, "exit 23")
+      checkStatus(-9, "kill -KILL ${'$'}${'$'}")
+    } finally {
+      zdotdir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun shortTmpBindFitsClaudeSocketAndPrunesOnlyOrphanedProotFiles() {
     val base = Files.createTempDirectory("horus-tmp").toFile()
     try {

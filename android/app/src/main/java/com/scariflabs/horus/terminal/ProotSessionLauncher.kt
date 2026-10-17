@@ -1293,13 +1293,20 @@ class ProotSessionLauncher(
       $ZSH_PROFILE_END
     """.trimIndent()
     internal val ZSH_EXIT_SCRIPT = """
-      # A bare exit or EOF must not inherit the last command's status (a failed
-      # build, or 130 after Ctrl-C). An explicit `exit N` keeps N. A killed
-      # shell never runs zshexit, so its status still reports the crash.
-      # Never apply this to command shells.
+      # A bare exit, logout or Ctrl-D must not inherit the last command's
+      # status (a failed build, or 130 after Ctrl-C). An explicit `exit N`
+      # keeps N, and a killed shell still reports its signal. The status is
+      # set before exiting because a login shell with a zlogout file (Debian
+      # ships /etc/zsh/zlogout) ignores an exit inside zshexit; zshexit only
+      # covers EOF without the line editor. Never apply this to command shells.
       if [[ -o interactive && -z "${'$'}{ZSH_EXECUTION_STRING-}" ]]; then
-        exit() { (( ${'$'}# )) && horus_exit_status=1; builtin exit "${'$'}@"; }
+        exit() { if (( ${'$'}# )); then horus_exit_status=1; else set -- 0; fi; builtin exit "${'$'}@"; }
+        logout() { if (( ${'$'}# )); then horus_exit_status=1; else set -- 0; fi; builtin logout "${'$'}@"; }
         zshexit() { [[ -n ${'$'}{horus_exit_status-} ]] || exit 0; }
+        setopt ignore_eof
+        horus-eof() { [[ -z ${'$'}BUFFER ]] && exit; zle delete-char-or-list; }
+        zle -N horus-eof
+        bindkey '^D' horus-eof
       fi
     """.trimIndent()
     internal val DOTNET_ENV_SCRIPT = """
