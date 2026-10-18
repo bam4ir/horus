@@ -383,6 +383,17 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     setNativeFrameMeta({alternate: false, contentRows: nativeRows, cursorRow: 0, lastContentRow: -1, mouseTracking: false, mouseSgr: false});
   }, [nativeRows, nativeSession]);
 
+  // A restarted app is a new session on the same screen. The screen resets
+  // its copy of the native screen state, so forget ours too: otherwise a new
+  // full-screen app matching the old one is never reported, the screen keeps
+  // the PTY at full height under the keyboard, and the app's top is hidden.
+  React.useEffect(() => {
+    nativeScreen.current = {hasContent: false, alternate: false};
+    nativeScrollOffset.current = 0;
+    nativeExpandedScrollOffset.current = 0;
+    followTail.current = true;
+  }, [nativeSessionId]);
+
   React.useEffect(() => {
     if (!nativeSession || nativeFrameMeta.alternate || !followTail.current || nativeRestorePending.current) return;
     const viewportHeight = nativeViewportHeight.current;
