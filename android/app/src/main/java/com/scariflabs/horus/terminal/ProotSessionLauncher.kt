@@ -1676,20 +1676,42 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         printf '%s\n' "${'$'}1" > "${'$'}provision_stage"
         printf '%s\n' "HORUS_INSTALL_STAGE=${'$'}1"
       }
+      # Copies a command's output to its log file and the terminal through a
+      # pipe, so the last lines (usually the error) reach the screen before
+      # the exit. A `tail -f` on the file polls once a second and was killed
+      # before it read them, which left failure screens with no log.
       run_logged() {
         log_file=${'$'}1
         shift
-        : > "${'$'}log_file"
-        "${'$'}@" >"${'$'}log_file" 2>&1 &
-        command_pid=${'$'}!
-        tail -n +1 -f "${'$'}log_file" &
-        tail_pid=${'$'}!
-        set +e
-        wait "${'$'}command_pid"
-        command_status=${'$'}?
-        set -e
-        kill "${'$'}tail_pid" 2>/dev/null || true
-        wait "${'$'}tail_pid" 2>/dev/null || true
+        log_pipe=${'$'}log_file.pipe
+        rm -f "${'$'}log_pipe"
+        if ! mkfifo "${'$'}log_pipe" 2>/dev/null; then
+          # No pipe: keep the log file, without live output.
+          "${'$'}@" >"${'$'}log_file" 2>&1 &
+          command_pid=${'$'}!
+          set +e
+          wait "${'$'}command_pid"
+          command_status=${'$'}?
+          set -e
+          tail -n 40 "${'$'}log_file" 2>/dev/null || true
+        else
+          tee "${'$'}log_file" < "${'$'}log_pipe" &
+          tee_pid=${'$'}!
+          "${'$'}@" >"${'$'}log_pipe" 2>&1 &
+          command_pid=${'$'}!
+          set +e
+          wait "${'$'}command_pid"
+          command_status=${'$'}?
+          set -e
+          # tee ends once every writer closes the pipe. A daemon the command
+          # left running may hold it open, so give up on it after 5 seconds.
+          ( sleep 5; kill "${'$'}tee_pid" 2>/dev/null ) >/dev/null 2>&1 &
+          tee_watchdog=${'$'}!
+          wait "${'$'}tee_pid" 2>/dev/null || true
+          kill "${'$'}tee_watchdog" 2>/dev/null || true
+          wait "${'$'}tee_watchdog" 2>/dev/null || true
+          rm -f "${'$'}log_pipe"
+        fi
         if [ "${'$'}command_status" -ne 0 ]; then
           printf '%s\n' "HORUS_INSTALL_COMMAND_EXIT=${'$'}command_status"
         fi

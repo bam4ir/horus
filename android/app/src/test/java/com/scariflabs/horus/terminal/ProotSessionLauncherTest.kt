@@ -898,6 +898,48 @@ class ProotSessionLauncherTest {
   }
 
   @Test
+  fun runLoggedShowsTheLastLinesBeforeTheCommandExits() {
+    val base = Files.createTempDirectory("horus-run-logged").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("live stat\n")
+      File(hostProc, "loadavg").writeText("0.01 0.02 0.03 1/2 3\n")
+      val launcher = ProotSessionLauncher(
+        runtime = ProotRuntimeLocator.LocatedRuntime(
+          prootBin = File(base, "libproot.so"),
+          loaderBin = File(base, "libproot_loader.so"),
+          libraryDir = base,
+          prootVersion = "5.4.0",
+        ),
+        scratchDir = File(base, "scratch"),
+        hostProcDir = hostProc,
+      )
+      val script = launcher.toolchainProvisionLaunchSpec(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE)
+        .argv.first { it.contains("run_logged() {") }
+      val start = script.indexOf("run_logged() {")
+      val end = script.indexOf("\n", script.indexOf("return \"\$command_status\"", start) + 1)
+      val runLogged = script.substring(start, script.indexOf("}", end) + 1)
+      val log = File(base, "install.log")
+      // The error lands just before the exit, as npm's does.
+      val process = ProcessBuilder(
+        "/bin/sh", "-c",
+        "set -eu\n$runLogged\nrun_logged '${log.path}' sh -c 'echo first; sleep 0.3; echo \"npm error ENOTFOUND\"; exit 7' || echo status=\$?",
+      ).redirectErrorStream(true).start()
+      val output = process.inputStream.bufferedReader().readText()
+      assertEquals(output, 0, process.waitFor())
+
+      assertEquals(listOf("first", "npm error ENOTFOUND", "HORUS_INSTALL_COMMAND_EXIT=7", "status=7"), output.lines().filter { it.isNotBlank() })
+      assertEquals("first\nnpm error ENOTFOUND\n", log.readText())
+      assertFalse(File(base, "install.log.pipe").exists())
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
   fun everyGeneratedGuestScriptIsValidShell() {
     val base = Files.createTempDirectory("horus-script-syntax").toFile()
     try {
