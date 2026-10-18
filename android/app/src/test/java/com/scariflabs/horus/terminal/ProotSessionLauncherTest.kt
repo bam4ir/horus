@@ -1062,6 +1062,7 @@ class ProotSessionLauncherTest {
       val cacheDir = File(guestRoot, ".cache/horus").apply { mkdirs() }
       val versionLog = File(base, "version.log")
       val npmLog = File(base, "npm.log")
+      val packageLog = File(base, "package-manager.log")
       val entry = File(payloadDir, "opencode")
       val entryPath = entry.absolutePath
       entry.writeText("#!/bin/sh\nif [ \"${'$'}1\" = --version ]; then printf 'version\\n' >> '${versionLog.absolutePath}'; fi\n")
@@ -1074,6 +1075,21 @@ class ProotSessionLauncherTest {
       }
       command("zsh", "exit 0")
       command("node", "exit 0")
+      // This fast-path fixture has a ready Node/npm toolchain on either host
+      // distribution. Never let a missing fixture invoke the host's apt/apk.
+      for (manager in listOf("apt-get", "apk")) {
+        command(manager, "printf '%s\\n' '$manager' >> '${packageLog.absolutePath}'; exit 93")
+      }
+      val systemPrefix = File(base, "usr/local")
+      File(systemPrefix, "bin/npm").apply {
+        parentFile!!.mkdirs()
+        writeText("#!/bin/sh\nexit 0\n")
+        setExecutable(true)
+      }
+      File(systemPrefix, "lib/node_modules/npm/package.json").apply {
+        parentFile!!.mkdirs()
+        writeText("{\"version\": \"${ProotSessionLauncher.UPSTREAM_NPM_VERSION}\"}\n")
+      }
       command(
         "npm",
         "printf 'npm\\n' >> '${npmLog.absolutePath}'\n" +
@@ -1098,6 +1114,9 @@ class ProotSessionLauncherTest {
       val script = launch.argv.last().replace("/root", guestRoot.absolutePath)
         .replace("/etc/apt", File(base, "etc/apt").absolutePath)
         .replace("/etc/dpkg", File(base, "etc/dpkg").absolutePath)
+        .replace("/usr/local", systemPrefix.absolutePath)
+        // Exercise Debian/npm detection even when the test host uses apk/pacman.
+        .replace("/usr/bin/apt-get", File(guestBin, "apt-get").absolutePath)
       fun runProvision(): String {
         val output = File.createTempFile("provision-", ".log", base)
         val process = ProcessBuilder("/bin/sh", "-c", script)
@@ -1114,6 +1133,7 @@ class ProotSessionLauncherTest {
           throw AssertionError("OpenCode provisioning exceeded the bounded host test timeout")
         }
         assertEquals(output.readText(), 0, process.exitValue())
+        assertFalse("fast-path provisioning must not invoke apt/apk", packageLog.exists())
         return output.readText()
       }
 
