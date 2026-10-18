@@ -49,11 +49,16 @@ export function printHiddenMarker(marker: string): string {
   return `printf '\\n%s\\n\\033[1A\\033[2K' ${shellQuote(marker)}`;
 }
 
+const CLONE_FAILED_HINT =
+  'Clone failed. Check that the repository exists. A private repository needs GitHub sign-in or an SSH URL.';
+
 export function buildProjectCloneCommand(source: string, directory: string, marker: string, kind: 'github' | 'url'): string {
   const expectedOrigin = kind === 'github' ? `https://github.com/${source}.git` : source;
+  // No credential prompt: a missing or private repository fails with an
+  // error instead of waiting at git's "Username for ..." line.
   const cloneCommand = kind === 'github'
-    ? `gh repo clone ${shellQuote(source)} ${shellQuote(directory)}`
-    : `git clone -- ${shellQuote(source)} ${shellQuote(directory)}`;
+    ? `GIT_TERMINAL_PROMPT=0 gh repo clone ${shellQuote(source)} ${shellQuote(directory)}`
+    : `GIT_TERMINAL_PROMPT=0 git clone -- ${shellQuote(source)} ${shellQuote(directory)}`;
   const quotedDirectory = shellQuote(directory);
   return [
     'set -e',
@@ -71,7 +76,7 @@ export function buildProjectCloneCommand(source: string, directory: string, mark
     `  printf '%s\\n' 'That workspace folder already exists but is not a checkout of this repository. It was left unchanged.' >&2`,
     '  exit 17',
     'fi',
-    cloneCommand,
+    `${cloneCommand} || { clone_status=$?; printf '%s\\n' ${shellQuote(CLONE_FAILED_HINT)} >&2; exit "$clone_status"; }`,
     `${printHiddenMarker(marker)}`,
   ].join('\n');
 }

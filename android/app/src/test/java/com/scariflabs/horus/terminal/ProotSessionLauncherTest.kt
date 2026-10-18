@@ -29,6 +29,10 @@ class ProotSessionLauncherTest {
     }
     checkStatus(0, "false\nexit\n", true)
     checkStatus(0, "false\n", true)
+    // Ctrl-C leaves $? at 130; a bare exit afterwards is still a clean close.
+    checkStatus(0, "sh -c 'kill -INT ${'$'}${'$'}'\nexit\n", true)
+    checkStatus(0, "sh -c 'kill -INT ${'$'}${'$'}'\n", true)
+    checkStatus(23, "exit 23\n", true)
     checkStatus(137, "exit 137\n", true)
     checkStatus(137, "kill -KILL ${'$'}${'$'}\n", true)
     checkStatus(23, "exit 23\n", false)
@@ -36,6 +40,64 @@ class ProotSessionLauncherTest {
       .redirectErrorStream(true).start()
     assertTrue(commandShell.waitFor(10, TimeUnit.SECONDS))
     assertEquals("interactive -c must retain CLI failures", 1, commandShell.exitValue())
+  }
+
+  @Test
+  fun loginZshOnATerminalExitsCleanlyAfterCtrlCEvenWithAZlogoutFile() {
+    // Debian's login shell sources /etc/zsh/zlogout, which makes zsh ignore an
+    // exit inside zshexit. It only shows on a real terminal, so drive zsh
+    // through a pty: as in the app, a login shell with the line editor on.
+    val zsh = System.getenv("HORUS_TEST_ZSH") ?: "/usr/bin/zsh"
+    org.junit.Assume.assumeTrue("zsh required for shell behavior test", File(zsh).canExecute())
+    val python = listOf("/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3")
+      .firstOrNull { File(it).canExecute() }
+    org.junit.Assume.assumeTrue("python3 required for the pty driver", python != null)
+    val zdotdir = Files.createTempDirectory("horus-zdot").toFile()
+    try {
+      File(zdotdir, ".zshrc").writeText(ProotSessionLauncher.ZSH_EXIT_SCRIPT + "\n")
+      File(zdotdir, ".zlogout").writeText("# like Debian's /etc/zsh/zlogout\n")
+      val driver = File(zdotdir, "drive_zsh.py").apply {
+        writeText(
+          """
+          import os, pty, select, sys, time
+          pid, fd = pty.fork()
+          if pid == 0:
+              os.execv(sys.argv[1], ['zsh', '-l'])
+          def drain(seconds):
+              end = time.time() + seconds
+              while time.time() < end:
+                  try:
+                      if select.select([fd], [], [], 0.05)[0]: os.read(fd, 4096)
+                  except OSError:
+                      return
+          drain(1.0)
+          for key in sys.argv[2:]:
+              os.write(fd, {'^C': b'\x03', '^D': b'\x04'}.get(key) or key.encode() + b'\r')
+              drain(0.6)
+          drain(1.0)
+          print(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))
+          """.trimIndent(),
+        )
+      }
+      fun checkStatus(expected: Int, vararg keys: String) {
+        val process = ProcessBuilder(listOf(python!!, driver.absolutePath, zsh) + keys)
+          .redirectErrorStream(true)
+          .apply { environment()["ZDOTDIR"] = zdotdir.absolutePath }
+          .start()
+        assertTrue("zsh pty fixture timed out", process.waitFor(30, TimeUnit.SECONDS))
+        val output = process.inputStream.bufferedReader().readText().trim()
+        assertEquals("keys=${keys.toList()}", expected.toString(), output.lineSequence().last())
+      }
+      checkStatus(0, "exit")
+      checkStatus(0, "sleep 100", "^C", "exit")
+      checkStatus(0, "sleep 100", "^C", "^D")
+      checkStatus(0, "false", "^D")
+      checkStatus(0, "false", "logout")
+      checkStatus(23, "exit 23")
+      checkStatus(-9, "kill -KILL ${'$'}${'$'}")
+    } finally {
+      zdotdir.deleteRecursively()
+    }
   }
 
   @Test
@@ -284,6 +346,64 @@ class ProotSessionLauncherTest {
   }
 
   @Test
+  fun renamesTheProfileAccountToTheConfiguredUsername() {
+    // A rootfs set up as "horus" whose user is now configured as "vishesh":
+    // the profile uid is renamed in place, never duplicated.
+    val base = Files.createTempDirectory("horus-profile-rename").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      val etc = File(rootfs, "etc").apply { mkdirs() }
+      val passwd = File(etc, "passwd").apply {
+        writeText("root:x:0:0:root:/root:/bin/sh\nhorus:x:1000:1000:horus:/home/horus:/bin/sh\n")
+      }
+      val group = File(etc, "group").apply { writeText("root:x:0:\nhorus:x:1000:\n") }
+      val shadow = File(etc, "shadow").apply {
+        writeText("root:!:19000:0:99999:7:::\nhorus:!:19000:0:99999:7:::\n")
+      }
+      val home = File(base, "home").apply { mkdirs() }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("live stat\n")
+      File(hostProc, "loadavg").writeText("0.01 0.02 0.03 1/2 3\n")
+
+      val launch = launcher(base, hostProc).interactiveShellLaunchSpec(rootfs, home, guestUsername = "vishesh")
+
+      assertTrue(launch.argv.windowed(2).any { it == listOf("-b", "${home.canonicalPath}:/home/vishesh") })
+      assertEquals("root:x:0:0:root:/root:/bin/sh\nvishesh:x:1000:1000:vishesh:/home/vishesh:/bin/sh\n", passwd.readText())
+      assertEquals("root:x:0:\nvishesh:x:1000:\n", group.readText())
+      assertEquals("root:!:19000:0:99999:7:::\nvishesh:!:19000:0:99999:7:::\n", shadow.readText())
+
+      // Renamed again from Account after SSH gave the user its login shell.
+      passwd.writeText(passwd.readText().replace("/home/vishesh:/bin/sh", "/home/vishesh:/usr/local/bin/horus-ssh-shell"))
+      launcher(base, hostProc).interactiveShellLaunchSpec(rootfs, home, guestUsername = "nefer")
+      assertEquals("root:x:0:0:root:/root:/bin/sh\nnefer:x:1000:1000:nefer:/home/nefer:/usr/local/bin/horus-ssh-shell\n", passwd.readText())
+      assertEquals("root:x:0:\nnefer:x:1000:\n", group.readText())
+
+      // Saved absolute paths keep working: former names link to the current one.
+      val homes = File(rootfs, "home")
+      fun link(name: String) = Files.readSymbolicLink(File(homes, name).toPath()).toString()
+      assertEquals("nefer", link("vishesh"))
+      assertEquals("nefer", link("horus"))
+      assertTrue(File(homes, "nefer").isDirectory && !Files.isSymbolicLink(File(homes, "nefer").toPath()))
+
+      // Renaming back reuses the former name; its alias is replaced by a real mount point.
+      launcher(base, hostProc).interactiveShellLaunchSpec(rootfs, home, guestUsername = "vishesh")
+      assertFalse(Files.isSymbolicLink(File(homes, "vishesh").toPath()))
+      assertEquals("vishesh", link("nefer"))
+      assertEquals("vishesh", link("horus"))
+
+      // A directory with content is never replaced by a link.
+      File(homes, "keep").mkdirs(); File(homes, "keep/file").writeText("x")
+      passwd.writeText(passwd.readText().replace("vishesh:x:1000:1000:vishesh:/home/vishesh", "keep:x:1000:1000:keep:/home/keep"))
+      group.writeText(group.readText().replace("vishesh:x:1000", "keep:x:1000"))
+      shadow.writeText(shadow.readText().replace("vishesh:!", "keep:!"))
+      launcher(base, hostProc).interactiveShellLaunchSpec(rootfs, home, guestUsername = "ra")
+      assertEquals("x", File(homes, "keep/file").readText())
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
   fun resumesAnInterruptedLegacyProfileMigration() {
     val base = Files.createTempDirectory("horus-profile-migration-retry").toFile()
     try {
@@ -504,8 +624,8 @@ class ProotSessionLauncherTest {
 
       assertTrue(first.contains("# My Codex defaults"))
       assertTrue(first.contains("Keep my project instructions."))
-      assertTrue(first.contains("Alpine Linux ARM64 guest through PRoot"))
-      assertTrue(first.contains("`apk` package manager"))
+      assertTrue(first.contains("Linux ARM64 guest through PRoot. The distribution is Alpine or Debian"))
+      assertTrue(first.contains("Alpine uses `apk`") && first.contains("Debian uses `apt`"))
       assertTrue(first.contains("`harness_codex` user"))
       assertTrue(first.contains("`--sandbox danger-full-access`"))
       assertTrue(first.indexOf("# My Codex defaults") < first.indexOf(ProotSessionLauncher.CODEX_AGENT_INSTRUCTIONS_BEGIN))
@@ -631,8 +751,8 @@ class ProotSessionLauncherTest {
 
         assertTrue(first.contains("# My ${harness.homeName} defaults"))
         assertTrue(first.contains("Keep my existing guidance."))
-        assertTrue(first.contains("Alpine Linux ARM64 guest through PRoot"))
-        assertTrue(first.contains("`apk` package manager"))
+        assertTrue(first.contains("Linux ARM64 guest through PRoot. The distribution is Alpine or Debian"))
+        assertTrue(first.contains("Alpine uses `apk`") && first.contains("Debian uses `apt`"))
         assertTrue(first.contains(harness.userName))
         assertTrue(first.contains("not a hard security boundary"))
         assertTrue(first.indexOf("# My ${harness.homeName} defaults") < first.indexOf(harness.beginMarker))
@@ -715,17 +835,159 @@ class ProotSessionLauncherTest {
         TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL,
       )
 
-      assertTrue(
-        launch.argv.last().contains(
-          "apk add --no-cache --no-progress ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh",
-        ),
-      )
+      val script = launch.argv.last()
+      // One script for both distributions: the guest picks apk or apt.
+      assertTrue(script.contains("pkg_install /root/.cache/horus/alpine-bootstrap.log \$pkgs_shell"))
+      assertTrue(script.contains("pkgs_shell=\"ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh\""))
+      assertTrue(script.contains("apk add --no-cache --no-progress"))
+      assertTrue(script.contains("force-unsafe-io"))
+      assertTrue(script.contains("pkgs_shell=\"ca-certificates curl git jq less openssh-client python3 python3-venv ripgrep tzdata zsh\""))
+      // Installs from before python3-venv joined the list get it on their next shell.
+      assertTrue(script.contains("|| ! has_python_venv; then"))
+      assertTrue(script.contains("apt_with_status install -y --no-install-recommends"))
+      assertTrue(script.contains("APT::Sandbox::User \"root\";"))
       assertTrue(launch.argv.last().contains("command -v git"))
       assertTrue(launch.argv.last().contains("git --version"))
       for (utility in listOf("rg", "curl", "jq", "python3")) {
         assertTrue(launch.argv.last().contains("/usr/bin/$utility"))
       }
       assertTrue(launch.argv.last().contains("/lib/ld-linux-aarch64.so.1"))
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun packageProgressTurnsAptAndApkStatusIntoPercentLines() {
+    val base = Files.createTempDirectory("horus-pkg-progress").toFile()
+    try {
+      val status = File(base, "status")
+      val progress = File(base, "progress")
+      val log = File(base, "log")
+      fun watch(manager: String, vararg lines: String): List<String> {
+        status.writeText("")
+        log.writeText("")
+        val target = if (manager == "apt") "\$pkg_status" else "\$pkg_log"
+        // Guest configuration must stay in the fixture, even on hosts with apt.
+        val script = ProotSessionLauncher.PACKAGE_MANAGER_SCRIPT
+          .replace("/etc/apt", File(base, "etc/apt").absolutePath)
+          .replace("/etc/dpkg", File(base, "etc/dpkg").absolutePath) +
+          "\nhorus_pkg=$manager; pkg_status='${status.path}'; pkg_progress='${progress.path}'; pkg_log='${log.path}'\n" +
+          "watch_packages & pid=\$!\n" +
+          lines.joinToString("") { "printf '%s\\n' '$it' >> \"$target\"; sleep 1.3\n" } +
+          "kill \$pid\n"
+        val process = ProcessBuilder("/bin/sh", "-c", script).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        process.waitFor()
+        return output.lines().filter { it.isNotBlank() }
+      }
+
+      // apt: download status, then dpkg status whose package may carry an arch.
+      assertEquals(
+        listOf("Downloading packages… 37%", "Installing packages… 64%"),
+        watch("apt", "dlstatus:12:37.5000:Retrieving file 12 of 40", "pmstatus:libc6:arm64:64.2000:Unpacking libc6 (arm64)"),
+      )
+      assertEquals("Installing packages… 64%", progress.readText().trim())
+      if (File("/usr/bin/apt-get").canExecute()) {
+        assertTrue(File(base, "etc/apt/apt.conf.d/99horus").readText().contains("APT::Sandbox::User \"root\";"))
+        assertTrue(File(base, "etc/dpkg/dpkg.cfg.d/99horus").readText().contains("force-unsafe-io"))
+      }
+      // apk: its own "(n/total)" lines in the install log.
+      assertEquals(
+        listOf("Installing packages… 25%"),
+        watch("apk", "fetch https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/APKINDEX.tar.gz", "(12/48) Installing libcurl (8.22.0-r0)"),
+      )
+      // Anything else is ignored.
+      assertEquals(emptyList<String>(), watch("apt", "pmerror:foo:1:bad", "noise"))
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun runLoggedShowsTheLastLinesBeforeTheCommandExits() {
+    val base = Files.createTempDirectory("horus-run-logged").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("live stat\n")
+      File(hostProc, "loadavg").writeText("0.01 0.02 0.03 1/2 3\n")
+      val launcher = ProotSessionLauncher(
+        runtime = ProotRuntimeLocator.LocatedRuntime(
+          prootBin = File(base, "libproot.so"),
+          loaderBin = File(base, "libproot_loader.so"),
+          libraryDir = base,
+          prootVersion = "5.4.0",
+        ),
+        scratchDir = File(base, "scratch"),
+        hostProcDir = hostProc,
+      )
+      val script = launcher.toolchainProvisionLaunchSpec(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE)
+        .argv.first { it.contains("run_logged() {") }
+      val start = script.indexOf("run_logged() {")
+      val end = script.indexOf("\n", script.indexOf("return \"\$command_status\"", start) + 1)
+      val runLogged = script.substring(start, script.indexOf("}", end) + 1)
+      val log = File(base, "install.log")
+      // The error lands just before the exit, as npm's does.
+      val process = ProcessBuilder(
+        "/bin/sh", "-c",
+        "set -eu\n$runLogged\nrun_logged '${log.path}' sh -c 'echo first; sleep 0.3; echo \"npm error ENOTFOUND\"; exit 7' || echo status=\$?",
+      ).redirectErrorStream(true).start()
+      val output = process.inputStream.bufferedReader().readText()
+      assertEquals(output, 0, process.waitFor())
+
+      assertEquals(listOf("first", "npm error ENOTFOUND", "HORUS_INSTALL_COMMAND_EXIT=7", "status=7"), output.lines().filter { it.isNotBlank() })
+      assertEquals("first\nnpm error ENOTFOUND\n", log.readText())
+      assertFalse(File(base, "install.log.pipe").exists())
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun everyGeneratedGuestScriptIsValidShell() {
+    val base = Files.createTempDirectory("horus-script-syntax").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("live stat\n")
+      File(hostProc, "loadavg").writeText("0.01 0.02 0.03 1/2 3\n")
+      // Remote access binds /dev/ptmx and /dev/pts, which the JVM test host may lack.
+      val hostDev = File(base, "dev").apply { mkdirs() }
+      listOf("null", "zero", "random", "urandom", "tty", "ptmx").forEach { File(hostDev, it).writeText("") }
+      File(hostDev, "pts").mkdirs()
+      val launcher = ProotSessionLauncher(
+        runtime = ProotRuntimeLocator.LocatedRuntime(
+          prootBin = File(base, "libproot.so"),
+          loaderBin = File(base, "libproot_loader.so"),
+          libraryDir = base,
+          prootVersion = "5.4.0",
+        ),
+        scratchDir = File(base, "scratch"),
+        hostProcDir = hostProc,
+        hostDevDir = hostDev,
+      )
+      val launches = TerminalRuntimeContract.let { contract ->
+        listOf(
+          contract.TOOLCHAIN_TARGET_SHELL, contract.TOOLCHAIN_TARGET_GITHUB, contract.TOOLCHAIN_TARGET_CLAUDE,
+          contract.TOOLCHAIN_TARGET_CODEX, contract.TOOLCHAIN_TARGET_OPENCODE,
+        ).flatMap { target ->
+          listOf(
+            launcher.toolchainProvisionLaunchSpec(rootfs, home, target),
+            launcher.toolchainSessionLaunchSpec(rootfs, home, guestUsername = "vishesh", target = target),
+          )
+        }
+      } + launcher.remoteAccessLaunchSpec(rootfs, home, workspaceDir = null, guestUsername = "vishesh")
+      for (launch in launches) {
+        val script = launch.argv.first { it.contains("set -eu") }
+        val process = ProcessBuilder("/bin/sh", "-n", "-c", script).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        assertEquals(output, 0, process.waitFor())
+      }
     } finally {
       base.deleteRecursively()
     }
@@ -800,6 +1062,7 @@ class ProotSessionLauncherTest {
       val cacheDir = File(guestRoot, ".cache/horus").apply { mkdirs() }
       val versionLog = File(base, "version.log")
       val npmLog = File(base, "npm.log")
+      val packageLog = File(base, "package-manager.log")
       val entry = File(payloadDir, "opencode")
       val entryPath = entry.absolutePath
       entry.writeText("#!/bin/sh\nif [ \"${'$'}1\" = --version ]; then printf 'version\\n' >> '${versionLog.absolutePath}'; fi\n")
@@ -812,6 +1075,21 @@ class ProotSessionLauncherTest {
       }
       command("zsh", "exit 0")
       command("node", "exit 0")
+      // This fast-path fixture has a ready Node/npm toolchain on either host
+      // distribution. Never let a missing fixture invoke the host's apt/apk.
+      for (manager in listOf("apt-get", "apk")) {
+        command(manager, "printf '%s\\n' '$manager' >> '${packageLog.absolutePath}'; exit 93")
+      }
+      val systemPrefix = File(base, "usr/local")
+      File(systemPrefix, "bin/npm").apply {
+        parentFile!!.mkdirs()
+        writeText("#!/bin/sh\nexit 0\n")
+        setExecutable(true)
+      }
+      File(systemPrefix, "lib/node_modules/npm/package.json").apply {
+        parentFile!!.mkdirs()
+        writeText("{\"version\": \"${ProotSessionLauncher.UPSTREAM_NPM_VERSION}\"}\n")
+      }
       command(
         "npm",
         "printf 'npm\\n' >> '${npmLog.absolutePath}'\n" +
@@ -834,6 +1112,11 @@ class ProotSessionLauncherTest {
       File(cacheDir, "opencode.ready").writeText("ready:123:456:789:1\n")
 
       val script = launch.argv.last().replace("/root", guestRoot.absolutePath)
+        .replace("/etc/apt", File(base, "etc/apt").absolutePath)
+        .replace("/etc/dpkg", File(base, "etc/dpkg").absolutePath)
+        .replace("/usr/local", systemPrefix.absolutePath)
+        // Exercise Debian/npm detection even when the test host uses apk/pacman.
+        .replace("/usr/bin/apt-get", File(guestBin, "apt-get").absolutePath)
       fun runProvision(): String {
         val output = File.createTempFile("provision-", ".log", base)
         val process = ProcessBuilder("/bin/sh", "-c", script)
@@ -850,6 +1133,7 @@ class ProotSessionLauncherTest {
           throw AssertionError("OpenCode provisioning exceeded the bounded host test timeout")
         }
         assertEquals(output.readText(), 0, process.exitValue())
+        assertFalse("fast-path provisioning must not invoke apt/apk", packageLog.exists())
         return output.readText()
       }
 
@@ -891,6 +1175,14 @@ class ProotSessionLauncherTest {
       assertEquals("npm\nnpm\n", npmLog.readText())
       assertEquals("version\nversion\n", versionLog.readText())
       assertEquals("preserve user config", config.readText())
+
+      // A working payload without its marker is restamped offline, never removed.
+      File(cacheDir, "opencode.ready").delete()
+      command("npm", "printf 'npm\\n' >> '${npmLog.absolutePath}'\nexit 1")
+      assertTrue(runProvision().contains("HORUS_TOOLCHAIN_READY"))
+      assertEquals("npm\nnpm\n", npmLog.readText())
+      assertTrue(entry.isFile && entry.canExecute())
+      assertEquals("ready:123:456:789:1\n", File(cacheDir, "opencode.ready").readText())
     } finally {
       base.deleteRecursively()
     }
@@ -929,6 +1221,13 @@ class ProotSessionLauncherTest {
       val launcher = launcher(base, hostProc)
 
       assertTrue(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE))
+      // Debian's npm is npm's own release in /usr/local/bin.
+      val debianNpm = File(rootfs, "usr/local/bin/npm").apply { requireNotNull(parentFile).mkdirs() }
+      assertTrue(File(rootfs, "usr/bin/npm").renameTo(debianNpm))
+      assertTrue(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE))
+      assertTrue(debianNpm.delete())
+      assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE))
+      File(rootfs, "usr/bin/npm").apply { writeText("npm"); setExecutable(true) }
       val currentMtime = Files.getLastModifiedTime(payloadTarget.toPath()).toMillis()
       Files.setLastModifiedTime(payloadTarget.toPath(), FileTime.fromMillis(currentMtime + 2_000))
       assertFalse(launcher.hasProvisionedToolchain(rootfs, home, TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE))
@@ -1291,18 +1590,96 @@ class ProotSessionLauncherTest {
   }
 
   @Test
+  fun givesOnlyTheProfileUsersSessionsARootHelperForSudo() {
+    val base = Files.createTempDirectory("horus-root-helper").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val hostProc = File(base, "proc").apply { mkdirs() }
+      File(hostProc, "stat").writeText("cpu 1\n")
+      File(hostProc, "loadavg").writeText("0 0 0\n")
+      val hostDev = File(base, "dev").apply { mkdirs() }
+      listOf("null", "zero", "random", "urandom", "tty", "ptmx").forEach { File(hostDev, it).writeText("") }
+      File(hostDev, "pts").mkdirs()
+      val launcher = ProotSessionLauncher(
+        runtime = ProotRuntimeLocator.LocatedRuntime(
+          prootBin = File(base, "libproot.so"),
+          loaderBin = File(base, "libproot_loader.so"),
+          libraryDir = base,
+          prootVersion = "5.4.0",
+        ),
+        scratchDir = File(base, "scratch"),
+        hostProcDir = hostProc,
+        hostDevDir = hostDev,
+      )
+      val sudo = File(rootfs, ProotSessionLauncher.GUEST_SUDO_PATH.trimStart('/'))
+      val helper = File(rootfs, ProotSessionLauncher.GUEST_ROOT_HELPER_PATH.trimStart('/'))
+
+      val harness = launcher.toolchainSessionLaunchSpec(
+        rootfs, home, guestUsername = "harness_codex", guestUid = 61_002, target = TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
+      )
+      assertFalse(harness.environment.contains("HORUS_ROOT_HELPER=1"))
+      assertFalse(harness.argv.contains("${File(hostDev, "pts").absolutePath}:/dev/pts"))
+      assertFalse(sudo.exists())
+
+      val claudeHome = File(base, "harness-homes/claude").apply { mkdirs() }
+      val own = launcher.toolchainSessionLaunchSpec(
+        rootfs, home, guestUsername = "nefer", target = TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL, rootHelper = true, provision = false,
+        harnessHomes = listOf(ProotSessionLauncher.HarnessHome(TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE, "harness_claude", claudeHome)),
+      )
+      // The user's own terminal runs the app's harnesses, as SSH does.
+      assertTrue(own.argv.windowed(2).any { it == listOf("-b", "${claudeHome.canonicalPath}:/home/harness_claude") })
+      assertEquals("claude=/home/harness_claude\n", File(rootfs, ProotSessionLauncher.GUEST_AGENT_HOMES_PATH.trimStart('/')).readText())
+      assertTrue(own.environment.contains("HORUS_ROOT_HELPER=1"))
+      assertTrue(own.environment.contains("HORUS_SKIP_TOOLCHAIN_PROVISION=1"))
+      val binds = own.argv.windowed(2).filter { it[0] == "-b" }.map { it[1] }
+      assertTrue(binds.contains("${File(hostDev, "ptmx").absolutePath}:/dev/ptmx"))
+      assertTrue(binds.contains("${File(hostDev, "pts").absolutePath}:/dev/pts"))
+      val script = own.argv[own.argv.size - 7]
+      assertTrue(script.contains("${ProotSessionLauncher.GUEST_ROOT_HELPER_PATH} \"${'$'}HORUS_SUDO_SOCKET\" \"${'$'}session_uid\""))
+      assertTrue(script.indexOf("HORUS_SUDO_SOCKET") < script.indexOf("setpriv --reuid"))
+      for (file in listOf(sudo, helper)) {
+        assertTrue("${file.name} is not executable", file.isFile && file.canExecute())
+        assertTrue(file.readText().startsWith("#!/usr/bin/python3\n"))
+      }
+
+      val remote = launcher.remoteAccessLaunchSpec(rootfs, home, workspaceDir = null, guestUsername = "nefer").argv
+      assertTrue(remote[remote.indexOf("horus-remote-access") - 1].contains("${ProotSessionLauncher.GUEST_ROOT_HELPER_PATH} /run/horus-sudo/ssh"))
+
+      // A stale copy is replaced; a symlink planted on the way is never followed.
+      sudo.writeText("old")
+      launcher.toolchainSessionLaunchSpec(rootfs, home, guestUsername = "nefer", target = TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL, rootHelper = true)
+      assertTrue(sudo.readText().startsWith("#!/usr/bin/python3\n"))
+      val outside = File(base, "outside").apply { mkdirs() }
+      File(rootfs, "usr/local/bin").deleteRecursively()
+      Files.createSymbolicLink(File(rootfs, "usr/local/bin").toPath(), outside.toPath())
+      assertThrows(IllegalStateException::class.java) {
+        launcher.toolchainSessionLaunchSpec(rootfs, home, guestUsername = "nefer", target = TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL, rootHelper = true)
+      }
+      assertTrue(outside.listFiles().isNullOrEmpty())
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
   fun remoteAccessHeredocsTerminateBeforeFollowingCommands() {
     val base = Files.createTempDirectory("horus-remote-heredocs").toFile()
     try {
       val rootfs = File(base, "rootfs").apply { mkdirs() }
       File(rootfs, "etc").mkdirs()
-      val launch = launcher(base, File(base, "proc").apply { mkdirs() }).remoteAccessLaunchSpec(
+      // SSH needs /dev/pts, which a macOS host lacks.
+      val hostDev = File(base, "dev").apply { mkdirs() }
+      listOf("null", "zero", "random", "urandom", "tty", "ptmx").forEach { File(hostDev, it).writeText("") }
+      File(hostDev, "pts").mkdirs()
+      val launch = launcher(base, File(base, "proc").apply { mkdirs() }, hostDev = hostDev).remoteAccessLaunchSpec(
         rootfs,
         File(base, "home").apply { mkdirs() },
         null,
         "luna",
       )
-      val script = launch.argv.takeLast(8)[2]
+      val script = launch.argv[launch.argv.indexOf("horus-remote-access") - 1]
       val lines = script.lines()
       val followingCommands = mapOf(
         "HORUS_SHELL" to listOf("chmod 755 \"\$login_shell.tmp\"", "mv -f \"\$login_shell.tmp\" \"\$login_shell\""),
@@ -1354,7 +1731,7 @@ class ProotSessionLauncherTest {
     }
   }
 
-  private fun launcher(base: File, hostProc: File, scratch: File = File(base, "scratch")): ProotSessionLauncher =
+  private fun launcher(base: File, hostProc: File, scratch: File = File(base, "scratch"), hostDev: File = File("/dev")): ProotSessionLauncher =
     ProotSessionLauncher(
       runtime = ProotRuntimeLocator.LocatedRuntime(
         prootBin = File(base, "libproot.so"),
@@ -1364,5 +1741,6 @@ class ProotSessionLauncherTest {
       ),
       scratchDir = scratch,
       hostProcDir = hostProc,
+      hostDevDir = hostDev,
     )
 }

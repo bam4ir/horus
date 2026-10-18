@@ -23,14 +23,18 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 }
 
-function errorMessage(code: string): string {
+function errorMessage(code: string, target: 'folder' | 'file' = 'folder'): string {
   if (code === 'timeout') return 'The file query timed out. Refresh to try again.';
   if (code === 'session_limit_reached') return 'The file query could not start beside the active terminal. Refresh to retry.';
   if (code === 'not_found') return 'That file or folder is no longer available.';
   if (code === 'too_large') return 'This file is too large to preview here.';
   if (code === 'binary_or_invalid_text') return 'This file is not valid UTF-8 text.';
   if (code === 'invalid_path') return 'That path cannot be opened.';
-  if (code === 'command_failed') return 'The guest shell could not list this folder. Refresh to retry.';
+  if (code === 'command_failed') {
+    return target === 'file'
+      ? 'This file could not be read. Check that you have permission to read it.'
+      : 'The guest shell could not list this folder. Refresh to retry.';
+  }
   if (code === 'invalid_output') return 'The guest returned an unreadable folder response. Refresh to retry.';
   return 'Could not read the workspace. Refresh to try again.';
 }
@@ -174,7 +178,7 @@ export function FileExplorerScreen({onBack}: {onBack: () => void}): React.JSX.El
       setPreview(result.content);
       setPreviewError(undefined);
     } else {
-      setPreviewError(errorMessage(result.errorCode));
+      setPreviewError(errorMessage(result.errorCode, 'file'));
     }
     setPreviewLoading(false);
   };

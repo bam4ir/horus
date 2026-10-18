@@ -6,6 +6,9 @@ import {listGuestDirectory} from '../src/files/fileExplorer';
 import {listGithubRepositories, type GithubRepositoryListResult} from '../src/projects/githubRepositories';
 import {clearStoredGithubAccount, readStoredGithubAccount} from '../src/projects/githubAccountStore';
 import {TerminalSessionClient} from '../src/terminal/session/sessionClient';
+import {setRemoteAccessEnabled} from '../src/remote/remoteAccess';
+import {readUserProfile} from '../src/profile/profileStore';
+import {UserAccountScreen} from '../src/ui/UserAccountScreen';
 import {useBackgroundSessionLock} from '../src/profile/sessionTimeout';
 import App from '../App';
 
@@ -17,6 +20,10 @@ jest.mock('../src/terminal/runtimeStatus', () => ({
     prootAvailable: true,
   })),
 }));
+
+jest.mock('../src/remote/remoteAccess', () => ({setRemoteAccessEnabled: jest.fn()}));
+
+jest.mock('../src/ui/UserAccountScreen', () => ({UserAccountScreen: () => null}));
 
 jest.mock('../src/files/fileExplorer', () => ({
   listGuestDirectory: jest.fn(async () => ({kind: 'success', entries: [], truncated: false, hiddenInvalidNameCount: 0})),
@@ -63,9 +70,9 @@ jest.mock('../src/profile/sessionTimeout', () => ({
 }));
 
 jest.mock('../src/terminal/TerminalScreen', () => ({
-  TerminalScreen: ({runtimeReady, screenTitle, screenEyebrow, sessionCommand, toolchain, completionMarker, onCompletion, onCommandFailure, onBack, onHome, stopSessionOnUnmount}: {runtimeReady?: boolean; screenTitle?: string; screenEyebrow?: string; sessionCommand?: string; toolchain?: string; completionMarker?: string; onCompletion?: () => void; onCommandFailure?: () => void; onBack?: () => void; onHome?: () => void; stopSessionOnUnmount?: boolean}) => require('react').createElement(
+  TerminalScreen: ({runtimeReady, screenTitle, screenEyebrow, sessionCommand, existingSessionId, toolchain, completionMarker, onCompletion, onCommandFailure, onBack, onHome, stopSessionOnUnmount}: {runtimeReady?: boolean; screenTitle?: string; screenEyebrow?: string; sessionCommand?: string; existingSessionId?: string; toolchain?: string; completionMarker?: string; onCompletion?: () => void; onCommandFailure?: () => void; onBack?: () => void; onHome?: () => void; stopSessionOnUnmount?: boolean}) => require('react').createElement(
     require('react-native').View,
-    {testID: 'debug-terminal', runtimeReady, screenTitle, screenEyebrow, sessionCommand, toolchain, completionMarker, onBack, onHome, stopSessionOnUnmount},
+    {testID: 'debug-terminal', runtimeReady, screenTitle, screenEyebrow, sessionCommand, existingSessionId, toolchain, completionMarker, onBack, onHome, stopSessionOnUnmount},
     onCompletion === undefined ? null : require('react').createElement(
       require('react-native').Pressable,
       {testID: 'debug-terminal-completion', onPress: onCompletion},
@@ -78,9 +85,10 @@ jest.mock('../src/terminal/TerminalScreen', () => ({
 }));
 
 jest.mock('../src/ui/MetroHomeScreen', () => ({
-  MetroHomeScreen: ({onOpen, onOpenGithubLogin, onOpenGithubAccount, githubAccount}: {onOpen: (target: {title: string; eyebrow: string; toolchain?: 'claude' | 'github'; command?: string; kind?: 'files'}) => void; onOpenGithubLogin: () => void; onOpenGithubAccount?: () => void; githubAccount?: {username: string; avatarUrl?: string}}) => require('react').createElement(
+  MetroHomeScreen: ({onOpen, onOpenGithubLogin, onOpenGithubAccount, onResumeSession, githubAccount, onOpenUser}: {onOpenUser?: () => void; onOpen: (target: {title: string; eyebrow: string; toolchain?: 'claude' | 'github'; command?: string; kind?: 'files'}) => void; onOpenGithubLogin: () => void; onOpenGithubAccount?: () => void; onResumeSession?: (session: {sessionId: string; toolchain: string; startedAtMs: number; command?: string}) => void; githubAccount?: {username: string; avatarUrl?: string}}) => require('react').createElement(
     require('react-native').View,
     {testID: 'metro-home'},
+    require('react').createElement(require('react-native').Pressable, {testID: 'metro-open-user', onPress: onOpenUser}),
     require('react').createElement(
       require('react-native').Text,
       {testID: 'metro-github-account-state'},
@@ -110,6 +118,10 @@ jest.mock('../src/ui/MetroHomeScreen', () => ({
     require('react').createElement(
       require('react-native').Pressable,
       {testID: 'metro-open-claude', onPress: () => onOpen({title: 'Claude Code', eyebrow: 'AI WORKBENCH', command: 'claude', toolchain: 'claude'})},
+    ),
+    require('react').createElement(
+      require('react-native').Pressable,
+      {testID: 'metro-resume-codex', onPress: () => onResumeSession?.({sessionId: 's-1-2', toolchain: 'codex', startedAtMs: 0, command: 'cd /workspace/projects/demo && exec codex'})},
     ),
   ),
 }));
@@ -193,6 +205,8 @@ describe('debug navigation', () => {
     jest.mocked(readStoredGithubAccount).mockReset().mockResolvedValue(undefined);
     jest.mocked(clearStoredGithubAccount).mockReset().mockResolvedValue(true);
     jest.mocked(listGithubRepositories).mockClear();
+    jest.mocked(readUserProfile).mockReset().mockResolvedValue(null);
+    jest.mocked(setRemoteAccessEnabled).mockReset();
     backHandler = undefined;
     removeBackSubscription = jest.fn();
     jest.spyOn(BackHandler, 'addEventListener').mockImplementation((eventName, handler) => {
@@ -260,7 +274,76 @@ describe('debug navigation', () => {
     const client = jest.mocked(TerminalSessionClient).mock.results.at(-1)?.value as {stopAllTerminalSessions: jest.Mock; stopSession: jest.Mock};
     expect(client.stopAllTerminalSessions).not.toHaveBeenCalled();
     expect(client.stopSession).not.toHaveBeenCalled();
+    expect(setRemoteAccessEnabled).not.toHaveBeenCalled();
 
+    await ReactTestRenderer.act(async () => {
+      renderer.unmount();
+      await Promise.resolve();
+    });
+  });
+
+  test.each(['success', 'error', 'switch'] as const)('logout and user switch stop sessions with the appropriate SSH opt-in (%s)', async kind => {
+    jest.mocked(readUserProfile).mockResolvedValue({users: [{distro: 'alpine', username: 'horus', avatar: 'falcon'}]});
+    const runtime = await readTerminalRuntimeStatus();
+    if (runtime.kind !== 'success') throw new Error('runtime fixture unavailable');
+    jest.mocked(readTerminalRuntimeStatus).mockResolvedValueOnce({...runtime, activeDistro: 'alpine'});
+    let resolveRemote!: (value: Awaited<ReturnType<typeof setRemoteAccessEnabled>>) => void;
+    jest.mocked(setRemoteAccessEnabled).mockImplementationOnce(() => new Promise(resolve => { resolveRemote = resolve; }));
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<App />);
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    await ReactTestRenderer.act(async () => { backHandler?.({} as never); });
+    await ReactTestRenderer.act(async () => { renderer.root.findByProps({testID: 'metro-open-user'}).props.onPress(); });
+    const client = jest.mocked(TerminalSessionClient).mock.results.at(-1)?.value as {stopAllTerminalSessions: jest.Mock};
+    client.stopAllTerminalSessions.mockResolvedValue({kind: 'applied'});
+    let result!: Promise<boolean>;
+    if (kind === 'switch') {
+      await ReactTestRenderer.act(async () => {
+        expect(await renderer.root.findByType(UserAccountScreen).props.onSwitchTo({distro: 'debian', username: 'other', avatar: 'cat'})).toBe(true);
+      });
+      expect(setRemoteAccessEnabled).not.toHaveBeenCalled();
+      expect(client.stopAllTerminalSessions).toHaveBeenCalledWith(expect.stringContaining('logout'), 'user_stop');
+      await ReactTestRenderer.act(async () => { renderer.unmount(); });
+      return;
+    }
+    await ReactTestRenderer.act(async () => { result = renderer.root.findByType(UserAccountScreen).props.onLogout(); });
+    expect(setRemoteAccessEnabled).toHaveBeenCalledWith(false);
+    expect(client.stopAllTerminalSessions).not.toHaveBeenCalled();
+    await ReactTestRenderer.act(async () => {
+      resolveRemote(kind === 'error' ? {kind} : {kind, snapshot: {enabled: false, state: 'stopped', detail: '', port: 8022, computers: []}});
+      expect(await result).toBe(kind === 'success');
+    });
+    if (kind === 'success') {
+      expect(client.stopAllTerminalSessions).toHaveBeenCalledWith(expect.stringContaining('logout'), 'user_stop');
+    } else {
+      expect(client.stopAllTerminalSessions).not.toHaveBeenCalled();
+      expect(renderer.root.findByType(UserAccountScreen)).toBeDefined();
+    }
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
+
+  test('reopens a recent session with the command it was started with', async () => {
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<App />);
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    await ReactTestRenderer.act(async () => {
+      backHandler?.({} as never);
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({testID: 'metro-resume-codex'}).props.onPress();
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+
+    // "Open again" after Codex quits starts this command, not a plain shell.
+    const terminal = renderer.root.findByProps({testID: 'debug-terminal'});
+    expect(terminal.props.existingSessionId).toBe('s-1-2');
+    expect(terminal.props.toolchain).toBe('codex');
+    expect(terminal.props.sessionCommand).toBe('cd /workspace/projects/demo && exec codex');
     await ReactTestRenderer.act(async () => {
       renderer.unmount();
       await Promise.resolve();

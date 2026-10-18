@@ -50,7 +50,7 @@ describe('buildProjectCloneCommand', () => {
       String.raw`  printf '%s\n' 'That workspace folder already exists but is not a checkout of this repository. It was left unchanged.' >&2`,
       '  exit 17',
       'fi',
-      "gh repo clone 'octo/hello' '/workspace/projects/hello'",
+      String.raw`GIT_TERMINAL_PROMPT=0 gh repo clone 'octo/hello' '/workspace/projects/hello' || { clone_status=$?; printf '%s\n' 'Clone failed. Check that the repository exists. A private repository needs GitHub sign-in or an SSH URL.' >&2; exit "$clone_status"; }`,
       String.raw`printf '\n%s\n\033[1A\033[2K' 'M1'`,
     ]);
   });
@@ -61,7 +61,7 @@ describe('buildProjectCloneCommand', () => {
     expect(body[1]).toBe(String.raw`if [ -e '/workspace/projects/it'\''s' ] || [ -L '/workspace/projects/it'\''s' ]; then`);
     expect(body[5]).toContain(String.raw`"$(normalize_git_remote 'https://example.com/it'\''s.git')"`);
     expect(body.slice(-2)).toEqual([
-      String.raw`git clone -- 'https://example.com/it'\''s.git' '/workspace/projects/it'\''s'`,
+      String.raw`GIT_TERMINAL_PROMPT=0 git clone -- 'https://example.com/it'\''s.git' '/workspace/projects/it'\''s' || { clone_status=$?; printf '%s\n' 'Clone failed. Check that the repository exists. A private repository needs GitHub sign-in or an SSH URL.' >&2; exit "$clone_status"; }`,
       String.raw`printf '\n%s\n\033[1A\033[2K' 'M2'`,
     ]);
   });

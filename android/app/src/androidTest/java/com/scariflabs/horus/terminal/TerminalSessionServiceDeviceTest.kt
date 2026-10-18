@@ -114,7 +114,10 @@ class TerminalSessionServiceDeviceTest {
     val preferences = context.getSharedPreferences("horus_profile", Context.MODE_PRIVATE)
     val createdProfile = !PasswordGate.isConfigured(context)
     if (createdProfile) {
-      assertTrue(PasswordGate.create(context, "Horus-device-test-42"))
+      assertEquals(
+        ProfileUsersCore.CreateResult.CREATED,
+        PasswordGate.create(context, RootfsCatalog.DISTRO_ALPINE, "horus", "falcon", "Horus-device-test-42"),
+      )
       assertTrue(preferences.edit().commit()) // Flush before the other process reads it.
     }
     val controller = RemoteAccessController(context)
@@ -128,6 +131,26 @@ class TerminalSessionServiceDeviceTest {
       assertEquals(controller.snapshot().toString(), RemoteAccess.STATE_RUNNING, controller.snapshot().state)
       // The server is loopback-only and has no test pairing keys.
       assertTrue(serviceDump().contains("isForeground=true"))
+      val serverPid = controller.store.readServerPid()
+      assertTrue(serverPid > 0)
+      val client = TerminalSessionServiceClient(context) { }
+      try {
+        // User switching stops SSH too, but keeps opt-in for activation to
+        // restart it as the newly authenticated user.
+        request { id, callback -> client.stopAll(id, "user_stop", callback) }
+        assertTrue(controller.snapshot().enabled)
+        assertEquals(RemoteAccess.STATE_STOPPED, controller.snapshot().state)
+        assertEquals(0L, controller.store.readServerPid())
+        assertFalse(File("/proc/$serverPid").exists())
+        // Explicit logout disables opt-in before the same acknowledged stop.
+        controller.disable()
+        request { id, callback -> client.stopAll(id, "user_stop", callback) }
+        assertFalse(controller.snapshot().enabled)
+        assertEquals(RemoteAccess.STATE_STOPPED, controller.snapshot().state)
+        await("logout clears started lifetime") { serviceDump().contains("startRequested=false") }
+      } finally {
+        client.close()
+      }
     } finally {
       controller.disable()
       try {

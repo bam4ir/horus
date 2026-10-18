@@ -19,17 +19,18 @@ describe('terminal links', () => {
     'http://localhost:5173',
     'http://127.0.0.1:3000',
     'http://[::1]:3000',
+    'https://example.com',
+    'https://docs.rs/tokio',
+    'http://192.168.1.20:8080',
   ])('allows %s', url => {
     expect(isTrustedTerminalUrl(url)).toBe(true);
   });
 
   test.each([
-    'https://github.com.evil.example',
-    'https://evilgithub.com',
-    'https://anthropic.com.attacker.example',
-    'http://localhost.evil.example',
     'https://openai.com:99999',
     'https://user@github.com',
+    'https://github.com@evil.example',
+    'https://-bad-.example',
     'ftp://github.com',
     'java' + 'script://github.com',
   ])('rejects %s', url => {
@@ -45,13 +46,13 @@ describe('terminal links', () => {
       },
     ]);
     expect(findTrustedTerminalLinks('embeddedhttps://github.com/path')).toEqual([]);
-    expect(findTrustedTerminalLinks('https://github.com.evil.example/path')).toEqual([]);
+    expect(findTrustedTerminalLinks('https://github.com@evil.example/path')).toEqual([]);
   });
 
-  test('opens only trusted links in the platform browser', async () => {
+  test('opens only well-formed links in the platform browser', async () => {
     const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
     await openTrustedTerminalLink('http://localhost:3000/');
-    await expect(openTrustedTerminalLink('https://example.com')).rejects.toThrow('untrusted_terminal_link');
+    await expect(openTrustedTerminalLink('https://user@example.com')).rejects.toThrow('untrusted_terminal_link');
     expect(openURL).toHaveBeenCalledTimes(1);
     expect(openURL).toHaveBeenCalledWith('http://localhost:3000/');
   });

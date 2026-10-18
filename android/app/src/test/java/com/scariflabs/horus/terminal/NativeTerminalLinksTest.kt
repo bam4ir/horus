@@ -3,6 +3,7 @@ package com.scariflabs.horus.terminal
 import java.nio.charset.StandardCharsets
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -27,8 +28,8 @@ class NativeTerminalLinksTest {
   }
 
   @Test
-  fun skipsUntrustedHostsAndUrlsWithoutABoundary() {
-    val (text, width) = row("https://example.com/x xhttps://github.com/y", 60)
+  fun skipsCredentialHostsAndUrlsWithoutABoundary() {
+    val (text, width) = row("https://github.com@evil.example/x xhttps://github.com/y", 60)
     assertSame(NativeTerminalLinks.NONE, NativeTerminalLinks.detect(text, width))
   }
 
@@ -131,8 +132,12 @@ class NativeTerminalLinksTest {
   }
 
   @Test
-  fun trustsClaudeDotCom() {
+  fun opensAnyWellFormedHost() {
     assertTrue(NativeTerminalLinks.isTrustedUrl("https://claude.com/cai/oauth/authorize?code=true"))
+    assertTrue(NativeTerminalLinks.isTrustedUrl("https://example.com/docs"))
+    assertTrue(NativeTerminalLinks.isTrustedUrl("http://[fe80::1]:8080/"))
+    assertFalse(NativeTerminalLinks.isTrustedUrl("https://user@example.com"))
+    assertFalse(NativeTerminalLinks.isTrustedUrl("https://example.com:99999"))
   }
 
   private fun row(value: String, columns: Int): Pair<Array<String>, ByteArray> {
