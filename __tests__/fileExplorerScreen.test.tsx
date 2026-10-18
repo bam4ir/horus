@@ -143,6 +143,31 @@ describe('FileExplorerScreen', () => {
     expect(subscriptions.every(subscription => subscription.remove.mock.calls.length > 0)).toBe(true);
   });
 
+  test('says a file could not be read rather than blaming the folder', async () => {
+    jest.mocked(readGuestTextFile).mockResolvedValueOnce({kind: 'error', errorCode: 'command_failed'});
+
+    let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<FileExplorerScreen onBack={() => undefined} />);
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+    await ReactTestRenderer.act(async () => {
+      renderer?.root.findByProps({testID: 'file-entry-directory'}).props.onPress();
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+    await ReactTestRenderer.act(async () => {
+      renderer?.root.findByProps({testID: 'file-entry-file'}).props.onPress();
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+    expect(renderer?.root.findByProps({testID: 'file-preview-error'}).props.children)
+      .toBe('This file could not be read. Check that you have permission to read it.');
+
+    await ReactTestRenderer.act(async () => {
+      renderer?.unmount();
+      await Promise.resolve();
+    });
+  });
+
   test('explains a guest shell failure and retries when refreshed', async () => {
     jest.mocked(listGuestDirectory)
       .mockResolvedValueOnce({kind: 'error', errorCode: 'command_failed'})
