@@ -868,7 +868,10 @@ class ProotSessionLauncherTest {
         status.writeText("")
         log.writeText("")
         val target = if (manager == "apt") "\$pkg_status" else "\$pkg_log"
-        val script = ProotSessionLauncher.PACKAGE_MANAGER_SCRIPT +
+        // Guest configuration must stay in the fixture, even on hosts with apt.
+        val script = ProotSessionLauncher.PACKAGE_MANAGER_SCRIPT
+          .replace("/etc/apt", File(base, "etc/apt").absolutePath)
+          .replace("/etc/dpkg", File(base, "etc/dpkg").absolutePath) +
           "\nhorus_pkg=$manager; pkg_status='${status.path}'; pkg_progress='${progress.path}'; pkg_log='${log.path}'\n" +
           "watch_packages & pid=\$!\n" +
           lines.joinToString("") { "printf '%s\\n' '$it' >> \"$target\"; sleep 1.3\n" } +
@@ -885,6 +888,10 @@ class ProotSessionLauncherTest {
         watch("apt", "dlstatus:12:37.5000:Retrieving file 12 of 40", "pmstatus:libc6:arm64:64.2000:Unpacking libc6 (arm64)"),
       )
       assertEquals("Installing packages… 64%", progress.readText().trim())
+      if (File("/usr/bin/apt-get").canExecute()) {
+        assertTrue(File(base, "etc/apt/apt.conf.d/99horus").readText().contains("APT::Sandbox::User \"root\";"))
+        assertTrue(File(base, "etc/dpkg/dpkg.cfg.d/99horus").readText().contains("force-unsafe-io"))
+      }
       // apk: its own "(n/total)" lines in the install log.
       assertEquals(
         listOf("Installing packages… 25%"),
@@ -1089,6 +1096,8 @@ class ProotSessionLauncherTest {
       File(cacheDir, "opencode.ready").writeText("ready:123:456:789:1\n")
 
       val script = launch.argv.last().replace("/root", guestRoot.absolutePath)
+        .replace("/etc/apt", File(base, "etc/apt").absolutePath)
+        .replace("/etc/dpkg", File(base, "etc/dpkg").absolutePath)
       fun runProvision(): String {
         val output = File.createTempFile("provision-", ".log", base)
         val process = ProcessBuilder("/bin/sh", "-c", script)
