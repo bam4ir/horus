@@ -1075,6 +1075,10 @@ class TerminalSessionService : Service() {
       sendResponse(reply, errorResponse(requestId, "invalid_request"))
       return
     }
+    // SSH logins live outside the PTY supervisor. Stop their process tree
+    // before acknowledging logout or a user switch. Keep opt-in here: rootfs
+    // activation restarts SSH as the new user; logout disables it in the UI.
+    remoteServer.stop()
     if (supervisorDelegate.isInitialized()) supervisor.shutdownAll(reason!!)
     attachedSessions.clear()
     sessionRecords.clear()

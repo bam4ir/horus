@@ -28,6 +28,7 @@ import {UserAccountScreen} from './src/ui/UserAccountScreen';
 import {useHardwareBack} from './src/ui/useHardwareBack';
 import {useBackgroundSessionLock} from './src/profile/sessionTimeout';
 import {updateUnlockGrant, useUnlockGrantAppState} from './src/profile/unlockGrant';
+import {setRemoteAccessEnabled} from './src/remote/remoteAccess';
 import {consumeLaunchSessionId} from './src/terminal/session/launchSession';
 import {sessionTitle} from './src/terminal/toolchainLabels';
 import {createRequestIdFactory} from './src/terminal/requestIds';
@@ -278,6 +279,12 @@ function App(): React.JSX.Element {
   // Logging out ends every session, unlike the background lock.
   const [loginUser, setLoginUser] = React.useState<LinuxDistro | undefined>();
   const logout = React.useCallback(async (next?: ProfileUser): Promise<boolean> => {
+    // Disable persistent SSH opt-in before the service acknowledges shutdown,
+    // so it cannot restart the server while the user is logged out.
+    if (next === undefined) {
+      const remote = await setRemoteAccessEnabled(false);
+      if (remote.kind !== 'success') return false;
+    }
     const stopped = await sessionClient.stopAllTerminalSessions(nextSessionRequestId('logout'), 'user_stop');
     if (stopped.kind !== 'applied') return false;
     setPendingCompletion(undefined);
