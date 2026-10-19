@@ -1,3 +1,11 @@
+> [!NOTE]
+> **Horus 1.1.0 has been submitted to F-Droid** and is waiting on their build
+> and review queue. You can wait for it to land there, or build the APK
+> yourself now; see **Build from source** under
+> [For developers](#for-developers) below. A self-built APK is signed with your
+> own key, so Android won't install it over the F-Droid or GitHub release; back
+> up anything you need and uninstall that version first.
+
 <div align="center">
 
 <p><img src="docs/readme/banner.png" width="880" alt="Horus: the Eye of Horus above the name HORUS and the Claude Code, Codex, OpenCode, and shell marks"></p>
@@ -157,6 +165,8 @@ still apply.
 Remote access stays off until you pair a computer or turn it on. Any app on
 the phone can reach loopback ports, so the paired key is what keeps others
 out.
+
+<a id="for-developers"></a>
 
 ## 𓏛 For developers
 
