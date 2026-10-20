@@ -186,6 +186,7 @@ function EditUserCard({user, onSave, onSaved, onCancel}: Readonly<{
         style={styles.input}
         testID="user-account-username"
         value={username} />
+      <Text accessibilityLabel={`${username.length} of 32 characters used`} style={styles.note} testID="user-account-username-count">{`${username.length}/32`}</Text>
       <Text style={styles.note}>
         {username === user.username ? `Your home is /home/${username}.` : username.length === 0 ? 'Your username is also your home folder’s name.' : `Your home becomes /home/${username}; /home/${user.username} keeps working as a link to it. Apps and shells already running keep the old name until they restart.`}
       </Text>

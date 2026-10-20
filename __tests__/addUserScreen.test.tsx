@@ -41,6 +41,21 @@ async function render(actions: AddUserActions, users: readonly ProfileUser[] = [
 }
 
 describe('AddUserScreen', () => {
+  test('shows the username limit and updates the count as the name changes', async () => {
+    const {renderer} = await render(fakeActions());
+    const input = () => renderer.root.findByProps({testID: 'account-username'});
+    const count = () => renderer.root.findByProps({testID: 'account-username-count'});
+    expect(input().props.maxLength).toBe(32);
+    expect(count().props.children).toBe('0/32');
+    for (const username of ['a'.repeat(32), 'Vi Shesh', '']) {
+      await ReactTestRenderer.act(async () => { input().props.onChangeText(username); });
+      const length = input().props.value.length;
+      expect(count().props.children).toBe(`${length}/32`);
+      expect(count().props.accessibilityLabel).toBe(`${length} of 32 characters used`);
+    }
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
+
   test('installs Debian beside Alpine, then creates the Debian user', async () => {
     const actions = fakeActions();
     const {renderer, created, press, fill} = await render(actions);

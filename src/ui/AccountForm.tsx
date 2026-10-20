@@ -104,6 +104,7 @@ export function AccountForm({draft, onSubmit, distroName}: AccountFormProps): Re
         submitBehavior="submit"
         testID="account-username"
         value={draft.username} />
+      <Text accessibilityLabel={`${draft.username.length} of 32 characters used`} style={styles.note} testID="account-username-count">{`${draft.username.length}/32`}</Text>
       <TextInput
         accessibilityLabel="Create password"
         autoCapitalize="none"
