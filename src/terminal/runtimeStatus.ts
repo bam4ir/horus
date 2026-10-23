@@ -335,7 +335,8 @@ async function runRootfsInstall(
   };
 }
 
-const PROVISION_PROGRESS_PATTERN = /^(Downloading|Installing) packages… (\d{1,3})%$/;
+// The wait line is shown while another session holds the package lock.
+const PROVISION_PROGRESS_PATTERN = /^(?:(Downloading|Installing) packages… (\d{1,3})%|Waiting for another install to finish…)$/;
 
 /**
  * What the running system package install last reported, e.g.

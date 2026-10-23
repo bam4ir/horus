@@ -1650,7 +1650,9 @@ class TerminalSessionService : Service() {
     const val DEFAULT_ROWS = 24
     const val DEFAULT_COLUMNS = 80
     const val INVALID_REQUEST_ID = "invalid-request"
-    const val TOOLCHAIN_PROVISION_TIMEOUT_MS = 300_000L
+    // Debian's first tools install under PRoot can pass five minutes on a
+    // slow phone, and stopping it mid-dpkg left installs failing after.
+    const val TOOLCHAIN_PROVISION_TIMEOUT_MS = 900_000L
     const val PROVISION_STOP_WAIT_MS = 2_000L
     const val PROVISION_DRAIN_WAIT_MS = 500L
     const val MAX_CLASSIFICATION_BYTES = 16 * 1024L
