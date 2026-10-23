@@ -844,7 +844,7 @@ class ProotSessionLauncherTest {
       assertTrue(script.contains("pkgs_shell=\"ca-certificates curl git jq less openssh-client python3 python3-venv ripgrep tzdata zsh\""))
       // Installs from before python3-venv joined the list get it on their next shell.
       assertTrue(script.contains("|| ! has_python_venv; then"))
-      assertTrue(script.contains("apt_with_status install -y --no-install-recommends"))
+      assertTrue(script.contains("apt_with_status install -y --fix-broken --no-install-recommends"))
       assertTrue(script.contains("APT::Sandbox::User \"root\";"))
       assertTrue(launch.argv.last().contains("command -v git"))
       assertTrue(launch.argv.last().contains("git --version"))
@@ -899,6 +899,139 @@ class ProotSessionLauncherTest {
       )
       // Anything else is ignored.
       assertEquals(emptyList<String>(), watch("apt", "pmerror:foo:1:bad", "noise"))
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  /**
+   * PACKAGE_MANAGER_SCRIPT with every guest path moved into [base], fake
+   * apt-get and dpkg first on PATH, and a `flock` (the host's, or an fcntl
+   * stand-in on hosts without one, e.g. macOS).
+   */
+  private fun packageFixture(base: File, aptBody: String, dpkgBody: String = "exit 0"): String {
+    val bin = File(base, "bin").apply { mkdirs() }
+    fun command(name: String, body: String) = File(bin, name).apply {
+      writeText("#!/bin/sh\n$body\n")
+      setExecutable(true)
+    }
+    command("apt-get", aptBody)
+    command("dpkg", dpkgBody)
+    if (ProcessBuilder("/bin/sh", "-c", "command -v flock").start().waitFor() != 0) {
+      val python = listOf("/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3").firstOrNull { File(it).canExecute() }
+      org.junit.Assume.assumeTrue("flock or python3 required for the package lock test", python != null)
+      File(bin, "flock").apply {
+        writeText(
+          "#!$python\nimport fcntl, sys\nargs = sys.argv[1:]\nflags = fcntl.LOCK_EX\n" +
+            "if args[0] == '-n':\n    flags |= fcntl.LOCK_NB\n    args = args[1:]\n" +
+            "try:\n    fcntl.flock(int(args[0]), flags)\nexcept OSError:\n    sys.exit(1)\n",
+        )
+        setExecutable(true)
+      }
+    }
+    val cache = File(base, "cache").apply { mkdirs() }
+    return "PATH='${bin.path}':\$PATH\n" +
+      ProotSessionLauncher.PACKAGE_MANAGER_SCRIPT
+        .replace("/var/lib/horus", File(base, "var/lib/horus").absolutePath)
+        .replace("/var/lib/dpkg", File(base, "var/lib/dpkg").absolutePath)
+        .replace("/var/lib/apt/lists", File(base, "var/lib/apt/lists").absolutePath)
+        .replace("/etc/apt", File(base, "etc/apt").absolutePath)
+        .replace("/etc/dpkg", File(base, "etc/dpkg").absolutePath)
+        .replace("/usr/bin/apt-get", File(bin, "apt-get").absolutePath)
+        .replace("/usr/bin/dpkg", File(bin, "dpkg").absolutePath)
+        .replace("/root/.cache/horus", cache.absolutePath) +
+      "\nrun_logged() { run_log=\$1; shift; \"\$@\" >>\"\$run_log\" 2>&1; }\n"
+  }
+
+  @Test
+  fun packageInstallsQueueBehindOneRootfsLock() {
+    val base = Files.createTempDirectory("horus-pkg-lock").toFile()
+    try {
+      val events = File(base, "events")
+      // Two sessions' installs must never overlap, as apt and apk fail on a held lock.
+      val script = packageFixture(
+        base,
+        "[ \"\$1\" = update ] && exit 0\nprintf 'start %s\\n' \"\$HORUS_TEST_NAME\" >> '${events.path}'\nsleep 1\n" +
+          "printf 'end %s\\n' \"\$HORUS_TEST_NAME\" >> '${events.path}'",
+      ) + "pkg_install '${File(base, "log").path}' zsh\n" +
+        // Released on return: the last session finds it free at once.
+        "exec 7>>'${File(base, "var/lib/horus/packages.lock").path}'; flock -n 7 || echo still-locked\n"
+      fun start(name: String) = ProcessBuilder("/bin/sh", "-c", script)
+        .redirectErrorStream(true)
+        .apply { environment()["HORUS_TEST_NAME"] = name }
+        .start()
+      val first = start("first")
+      while (!events.isFile) Thread.sleep(20)
+      val second = start("second")
+      val outputs = listOf(first, second).map { process ->
+        val output = process.inputStream.bufferedReader().readText()
+        assertTrue("package install did not finish", process.waitFor(20, TimeUnit.SECONDS))
+        assertEquals(output, 0, process.exitValue())
+        output
+      }
+
+      assertEquals(listOf("start first", "end first", "start second", "end second"), events.readLines())
+      assertFalse(outputs[0].contains("Waiting for another install to finish…"))
+      assertTrue(outputs[1], outputs[1].contains("Waiting for another install to finish…"))
+      assertFalse(outputs[1], outputs[1].contains("still-locked"))
+      assertTrue(File(base, "etc/apt/apt.conf.d/99horus").readText().contains("DPkg::Lock::Timeout \"120\";"))
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun packageInstallFinishesAnInterruptedDpkgFirst() {
+    val base = Files.createTempDirectory("horus-dpkg-recover").toFile()
+    try {
+      val calls = File(base, "calls")
+      val script = packageFixture(
+        base,
+        aptBody = "printf 'apt-get %s\\n' \"\$*\" >> '${calls.path}'",
+        dpkgBody = "printf 'dpkg %s\\n' \"\$*\" >> '${calls.path}'\n[ \"\$1\" != --configure ] || rm -f '${File(base, "var/lib/dpkg/updates").path}'/*",
+      ) + "pkg_install '${File(base, "log").path}' zsh\n"
+      fun run(): List<String> {
+        calls.delete()
+        val process = ProcessBuilder("/bin/sh", "-c", script).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        assertTrue(process.waitFor(20, TimeUnit.SECONDS))
+        assertEquals(output, 0, process.exitValue())
+        return calls.readLines().map { it.substringBefore(" -o APT::Status-Fd") + if (it.contains("install")) " " + it.substringAfter("install") else "" }
+      }
+
+      // A dpkg killed mid-run leaves a journal entry in updates/.
+      File(base, "var/lib/dpkg/updates/0001").apply { parentFile!!.mkdirs(); writeText("journal") }
+      val recovered = run()
+      assertEquals("dpkg --configure -a", recovered.first { it.startsWith("dpkg --configure") })
+      assertTrue(recovered.indexOf("dpkg --configure -a") < recovered.indexOfFirst { it.contains("install") })
+      assertTrue(recovered.joinToString(), recovered.any { it.contains("-y --fix-broken --no-install-recommends zsh") })
+      assertTrue(File(base, "log").readText().contains("Finishing an earlier install that was interrupted…"))
+
+      // A clean dpkg database is left alone.
+      assertFalse(run().any { it.startsWith("dpkg --configure") })
+    } finally {
+      base.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun remoteAccessInstallTakesThePackageLockAndDropsItBeforeDropbear() {
+    val base = Files.createTempDirectory("horus-remote-lock").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val hostDev = File(base, "dev").apply { mkdirs() }
+      listOf("null", "zero", "random", "urandom", "tty", "ptmx").forEach { File(hostDev, it).writeText("") }
+      File(hostDev, "pts").mkdirs()
+      val argv = launcher(base, File(base, "proc").apply { mkdirs() }, hostDev = hostDev)
+        .remoteAccessLaunchSpec(rootfs, home, workspaceDir = null, guestUsername = "nefer").argv
+      val lines = argv[argv.indexOf("horus-remote-access") - 1].lines().map { it.trim() }
+      val take = lines.indexOf("pkg_lock_take")
+      assertTrue(take > 0)
+      assertTrue(take < lines.indexOf("if ! remote_install; then"))
+      assertTrue(lines.indexOf("pkg_lock_release") in take..lines.indexOfFirst { it.startsWith("dropbear_script=") })
+      assertTrue(lines.contains("if dpkg_interrupted; then dpkg_recover || true; fi"))
     } finally {
       base.deleteRecursively()
     }
