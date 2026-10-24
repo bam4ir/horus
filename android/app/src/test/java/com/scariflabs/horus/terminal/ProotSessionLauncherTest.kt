@@ -1038,6 +1038,29 @@ class ProotSessionLauncherTest {
   }
 
   @Test
+  fun productionLoggerWatchdogDoesNotRetainThePackageLock() {
+    val base = Files.createTempDirectory("horus-logger-lock").toFile()
+    try {
+      val rootfs = File(base, "rootfs").apply { mkdirs() }
+      File(rootfs, "etc").mkdirs()
+      val home = File(base, "home").apply { mkdirs() }
+      val generated = launcher(base, File(base, "proc").apply { mkdirs() })
+        .toolchainProvisionLaunchSpec(rootfs, home, "shell").argv.last()
+      val logger = generated.substring(generated.indexOf("run_logged() {"), generated.indexOf("# The installers download silently"))
+      // Let the watchdog actually start sleep before killing its shell. This
+      // deterministically exercises the descendant that otherwise races startup.
+      val script = packageFixture(base, "exit 0") + "\n" + logger + "\n" +
+        "kill() { /bin/sleep 0.2; command kill \"\$@\"; }\n" +
+        "pkg_install '${File(base, "install.log").path}' gzip\n" +
+        "exec 7>>'${File(base, "var/lib/horus/packages.lock").path}'; flock -n 7\n"
+      val process = ProcessBuilder("/bin/sh", "-c", script).redirectErrorStream(true).start()
+      assertTrue("logger fixture timed out", process.waitFor(15, TimeUnit.SECONDS))
+      val output = process.inputStream.bufferedReader().readText()
+      assertEquals("watchdog's sleep kept the lock open: $output", 0, process.exitValue())
+    } finally { base.deleteRecursively() }
+  }
+
+  @Test
   fun runLoggedShowsTheLastLinesBeforeTheCommandExits() {
     val base = Files.createTempDirectory("horus-run-logged").toFile()
     try {

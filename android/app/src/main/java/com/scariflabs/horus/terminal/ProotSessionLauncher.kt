@@ -1745,7 +1745,8 @@ ${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
           set -e
           # tee ends once every writer closes the pipe. A daemon the command
           # left running may hold it open, so give up on it after 5 seconds.
-          ( sleep 5; kill "${'$'}tee_pid" 2>/dev/null ) >/dev/null 2>&1 &
+          # Its sleep may outlive the watchdog shell; never inherit the package lock.
+          ( sleep 5; kill "${'$'}tee_pid" 2>/dev/null ) 7>&- >/dev/null 2>&1 &
           tee_watchdog=${'$'}!
           wait "${'$'}tee_pid" 2>/dev/null || true
           kill "${'$'}tee_watchdog" 2>/dev/null || true
