@@ -2308,8 +2308,16 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
       fi
       # On Debian the user cannot run apt; Horus's app tiles install the
       # system packages as root, and these need only what is already there.
+${PACKAGE_LOCK_SCRIPT.prependIndent("      ")}
       system_packages() {
-        if command -v apk >/dev/null 2>&1; then apk add --no-cache --no-progress "${'$'}@"; else true; fi
+        if command -v apk >/dev/null 2>&1; then
+          pkg_lock_take
+          if apk add --no-cache --no-progress "${'$'}@"; then package_status=0; else package_status=${'$'}?; fi
+          pkg_lock_release
+          return "${'$'}package_status"
+        else
+          true
+        fi
       }
       install_claude() {
         system_packages bash curl ca-certificates git libgcc libstdc++ &&
